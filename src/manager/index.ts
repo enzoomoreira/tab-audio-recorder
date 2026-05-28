@@ -107,7 +107,7 @@ function buildCard(meta: RecordingMetadata): HTMLLIElement {
       <span class="card__date">${escapeHtml(formatDate(meta.startedAt))}</span>
     </div>
     <div class="card__title" title="${escapeHtml(meta.sourceTitle)}">${escapeHtml(meta.sourceTitle)}</div>
-    <div class="player" hidden>
+    <div class="player">
       <button class="player__btn" aria-label="Play"></button>
       <div class="player__track">
         <input type="range" class="player__scrubber" min="0" max="1000" value="0" step="1" aria-label="Seek">
@@ -117,7 +117,6 @@ function buildCard(meta: RecordingMetadata): HTMLLIElement {
     <div class="card__footer">
       <span class="card__meta">${formatDuration(meta.durationMs)} &middot; ${formatSize(meta.sizeBytes)} &middot; ${escapeHtml(meta.mimeType.split(';')[0] ?? meta.mimeType)}</span>
       <div class="card__actions">
-        <button class="btn btn--play" data-action="play">Play</button>
         <button class="btn btn--export" data-action="export">Export</button>
         <button class="btn btn--danger" data-action="delete">Delete</button>
       </div>
@@ -125,13 +124,10 @@ function buildCard(meta: RecordingMetadata): HTMLLIElement {
   `;
 
   const playerEl = li.querySelector<HTMLElement>('.player')!;
-  const playBtn = li.querySelector<HTMLButtonElement>('[data-action="play"]')!;
   const exportBtn = li.querySelector<HTMLButtonElement>('[data-action="export"]')!;
   const deleteBtn = li.querySelector<HTMLButtonElement>('[data-action="delete"]')!;
 
-  const player = new AudioPlayer(playerEl, meta.durationMs);
-
-  // Fetch blob once, cache the object URL for reuse by Export.
+  // Fetch blob once, cache the object URL across Play and Export.
   async function ensureObjectURL(): Promise<string | null> {
     const cached = objectURLs.get(meta.id);
     if (cached) return cached;
@@ -147,22 +143,7 @@ function buildCard(meta: RecordingMetadata): HTMLLIElement {
     return url;
   }
 
-  playBtn.addEventListener('click', async () => {
-    playBtn.disabled = true;
-    playBtn.textContent = 'Loading...';
-
-    const url = await ensureObjectURL();
-    if (!url) {
-      playBtn.textContent = 'Error';
-      playBtn.disabled = false;
-      return;
-    }
-
-    player.load(url);
-    playerEl.hidden = false;
-    player.play();
-    playBtn.hidden = true;
-  });
+  const player = new AudioPlayer(playerEl, meta.durationMs, ensureObjectURL);
 
   exportBtn.addEventListener('click', async () => {
     exportBtn.disabled = true;

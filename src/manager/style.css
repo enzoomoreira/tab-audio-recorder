@@ -192,8 +192,27 @@ body {
   padding: 0;
 }
 
-.player__btn:hover {
+.player__btn:hover:not(:disabled) {
   background: var(--accent-hover);
+}
+
+.player__btn:disabled {
+  cursor: wait;
+}
+
+.player__btn--loading {
+  background: #555;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Defensive: ensure the [hidden] attribute always wins over display:flex
+   on .player or other display-overriding classes. */
+[hidden] {
+  display: none !important;
 }
 
 .player__track {
