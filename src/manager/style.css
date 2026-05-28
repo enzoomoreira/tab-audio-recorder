@@ -168,10 +168,88 @@ body {
   white-space: nowrap;
 }
 
-.card__player {
-  width: 100%;
+/* Custom audio player */
+.player {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+}
+
+.player__btn {
+  flex-shrink: 0;
+  width: 32px;
   height: 32px;
-  accent-color: var(--accent);
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s;
+  padding: 0;
+}
+
+.player__btn:hover {
+  background: var(--accent-hover);
+}
+
+.player__track {
+  flex: 1;
+  position: relative;
+  height: 20px;
+  display: flex;
+  align-items: center;
+}
+
+.player__scrubber {
+  width: 100%;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+  height: 20px;
+  margin: 0;
+  padding: 0;
+}
+
+/* Firefox-specific track and thumb */
+.player__scrubber::-moz-range-track {
+  background: #333;
+  height: 4px;
+  border-radius: 2px;
+}
+
+.player__scrubber::-moz-range-progress {
+  background: var(--accent);
+  height: 4px;
+  border-radius: 2px;
+}
+
+.player__scrubber::-moz-range-thumb {
+  appearance: none;
+  background: #fff;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: none;
+  box-shadow: 0 0 0 2px var(--accent);
+  transition: transform 0.1s;
+}
+
+.player__scrubber:hover::-moz-range-thumb {
+  transform: scale(1.2);
+}
+
+.player__time {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  min-width: 72px;
+  text-align: right;
 }
 
 .card__footer {

@@ -1,4 +1,5 @@
 import { createLogger } from '../shared/Logger';
+import { AudioPlayer } from './AudioPlayer';
 import type { RecordingMetadata, SortField, SortDirection } from '../types';
 
 const logger = createLogger('Manager');
@@ -100,31 +101,37 @@ function buildCard(meta: RecordingMetadata): HTMLLIElement {
   li.className = 'card';
   li.dataset['id'] = meta.id;
 
-  // <audio> starts hidden — revealed only after the blob is loaded and playback starts.
-  // This avoids showing an empty/broken player to the user.
   li.innerHTML = `
     <div class="card__header">
       <span class="card__host">${escapeHtml(meta.sourceHost)}</span>
       <span class="card__date">${escapeHtml(formatDate(meta.startedAt))}</span>
     </div>
     <div class="card__title" title="${escapeHtml(meta.sourceTitle)}">${escapeHtml(meta.sourceTitle)}</div>
-    <audio class="card__player" controls preload="none" aria-label="Recording player" hidden></audio>
+    <div class="player" hidden>
+      <button class="player__btn" aria-label="Play"></button>
+      <div class="player__track">
+        <input type="range" class="player__scrubber" min="0" max="1000" value="0" step="1" aria-label="Seek">
+      </div>
+      <span class="player__time">0:00 / 0:00</span>
+    </div>
     <div class="card__footer">
       <span class="card__meta">${formatDuration(meta.durationMs)} &middot; ${formatSize(meta.sizeBytes)} &middot; ${escapeHtml(meta.mimeType.split(';')[0] ?? meta.mimeType)}</span>
       <div class="card__actions">
         <button class="btn btn--play" data-action="play">Play</button>
-        <button class="btn btn--save" data-action="save">Save file</button>
+        <button class="btn btn--export" data-action="export">Export</button>
         <button class="btn btn--danger" data-action="delete">Delete</button>
       </div>
     </div>
   `;
 
-  const audio = li.querySelector('.card__player') as HTMLAudioElement;
-  const playBtn = li.querySelector('[data-action="play"]') as HTMLButtonElement;
-  const saveBtn = li.querySelector('[data-action="save"]') as HTMLButtonElement;
-  const deleteBtn = li.querySelector('[data-action="delete"]') as HTMLButtonElement;
+  const playerEl = li.querySelector<HTMLElement>('.player')!;
+  const playBtn = li.querySelector<HTMLButtonElement>('[data-action="play"]')!;
+  const exportBtn = li.querySelector<HTMLButtonElement>('[data-action="export"]')!;
+  const deleteBtn = li.querySelector<HTMLButtonElement>('[data-action="delete"]')!;
 
-  // Fetches the blob once and caches the object URL for subsequent Save calls.
+  const player = new AudioPlayer(playerEl, meta.durationMs);
+
+  // Fetch blob once, cache the object URL for reuse by Export.
   async function ensureObjectURL(): Promise<string | null> {
     const cached = objectURLs.get(meta.id);
     if (cached) return cached;
@@ -140,8 +147,6 @@ function buildCard(meta: RecordingMetadata): HTMLLIElement {
     return url;
   }
 
-  // Play button: load blob, reveal player, start playback, then hide itself
-  // (the native audio controls take over from that point).
   playBtn.addEventListener('click', async () => {
     playBtn.disabled = true;
     playBtn.textContent = 'Loading...';
@@ -153,20 +158,20 @@ function buildCard(meta: RecordingMetadata): HTMLLIElement {
       return;
     }
 
-    audio.src = url;
-    audio.hidden = false;
-    void audio.play();
-    playBtn.hidden = true; // native controls replace the button from here
+    player.load(url);
+    playerEl.hidden = false;
+    player.play();
+    playBtn.hidden = true;
   });
 
-  saveBtn.addEventListener('click', async () => {
-    saveBtn.disabled = true;
-    saveBtn.textContent = 'Saving...';
+  exportBtn.addEventListener('click', async () => {
+    exportBtn.disabled = true;
+    exportBtn.textContent = 'Exporting...';
 
     const url = await ensureObjectURL();
     if (!url) {
-      saveBtn.textContent = 'Error';
-      saveBtn.disabled = false;
+      exportBtn.textContent = 'Error';
+      exportBtn.disabled = false;
       return;
     }
 
@@ -179,14 +184,15 @@ function buildCard(meta: RecordingMetadata): HTMLLIElement {
     a.download = filename;
     a.click();
 
-    saveBtn.textContent = 'Save file';
-    saveBtn.disabled = false;
+    exportBtn.textContent = 'Export';
+    exportBtn.disabled = false;
   });
 
   deleteBtn.addEventListener('click', async () => {
     if (!confirm(`Delete recording from "${meta.sourceHost}"?\n\nThis cannot be undone.`)) return;
 
     deleteBtn.disabled = true;
+    player.destroy();
 
     const url = objectURLs.get(meta.id);
     if (url) {
