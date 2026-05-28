@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>09 - cross-origin iframe (P2 frame routing)</title>
+  </head>
+  <body>
+    <h1>09 - cross-origin iframe embedding 01</h1>
+    <p>Expected strategy: <strong>DOM via P2 frame routing</strong> (target frame != top)</p>
+    <p>The iframe is loaded from a different origin (different port), so we
+       can't reach its window directly -- we send postMessage to it.</p>
+    <iframe
+      id="frame"
+      width="500"
+      height="120"
+      data-cross-origin-target="true"
+    ></iframe>
+    <button data-testid="start">Start audio</button>
+    <script>
+      // Resolve cross-origin host -- the E2E spec sets window.__crossOriginBaseUrl
+      // before clicking start, or via query param.
+      const params = new URLSearchParams(location.search);
+      const altBaseUrl = params.get('alt');
+      if (!altBaseUrl) {
+        document.body.insertAdjacentHTML(
+          'beforeend',
+          '<p style="color:red"><strong>Missing ?alt=&lt;urlAlt&gt; query param -- this page must be opened from the E2E spec.</strong></p>',
+        );
+      }
+      const frame = document.getElementById('frame');
+      if (altBaseUrl) frame.src = `${altBaseUrl}/01-audio-src-direct.html`;
+
+      window.__expected = { strategy: 'DOM', technique: 'iframe-cross-origin' };
+
+      window.__startAudio = () => {
+        // Cross-origin: cannot touch contentWindow.__startAudio directly.
+        // The child page (01) listens for postMessage('START', '*').
+        frame.contentWindow.postMessage('START', '*');
+      };
+      window.__stopAudio = () => {
+        frame.contentWindow.postMessage('STOP', '*');
+      };
+      document
+        .querySelector('[data-testid="start"]')
+        .addEventListener('click', () => window.__startAudio());
+    </script>
+  </body>
+</html>

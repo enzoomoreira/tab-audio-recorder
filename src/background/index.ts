@@ -52,6 +52,20 @@ browser.runtime.onMessage.addListener(
       return undefined;
     }
 
+    // --- Content script test bridge (E2E-builds only; see src/content/index.ts) ---
+    // Vite replaces `__TEST_BRIDGE__` at build time; production strips both branches.
+    if (__TEST_BRIDGE__) {
+      if (type === 'TEST_START_RECORDING') {
+        const tabId = sender.tab?.id;
+        return tabId != null ? startRecording(tabId) : Promise.resolve({ ok: false, error: 'no tab' });
+      }
+
+      if (type === 'TEST_STOP_RECORDING') {
+        const tabId = sender.tab?.id;
+        return tabId != null ? stopRecording(tabId) : Promise.resolve({ ok: false, error: 'no tab' });
+      }
+    }
+
     // --- Content script ---
     if (type === 'RECORDING_COMPLETE') {
       const tabId = sender.tab?.id;

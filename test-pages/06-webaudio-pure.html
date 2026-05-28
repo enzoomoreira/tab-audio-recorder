@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>06 - Web Audio API pure</title>
+    <script src="lib/audio.js"></script>
+  </head>
+  <body>
+    <h1>06 - OscillatorNode -&gt; AudioContext.destination (no element)</h1>
+    <p>Expected strategy: <strong>Web Audio (P3)</strong></p>
+    <p>
+      No &lt;audio&gt; or &lt;video&gt; in this page. The hook injected in MAIN
+      world must intercept the AudioContext and produce a tap.
+    </p>
+    <button data-testid="start">Start sine</button>
+    <button data-testid="stop">Stop</button>
+    <script>
+      window.__expected = { strategy: 'WebAudio', technique: 'oscillator-destination' };
+
+      let session = null;
+      window.__startAudio = () => {
+        if (!session) session = window.startWebAudioSine(880);
+      };
+      window.__stopAudio = () => {
+        if (session) {
+          session.stop();
+          session = null;
+        }
+      };
+      document
+        .querySelector('[data-testid="start"]')
+        .addEventListener('click', window.__startAudio);
+      document
+        .querySelector('[data-testid="stop"]')
+        .addEventListener('click', window.__stopAudio);
+    </script>
+  </body>
+</html>

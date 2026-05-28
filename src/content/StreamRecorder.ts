@@ -26,14 +26,23 @@ function captureStream(element: HTMLMediaElement): MediaStream {
   type WithCapture = { captureStream: () => MediaStream };
   type WithMozCapture = { mozCaptureStream: () => MediaStream };
 
+  let stream: MediaStream;
   if (typeof (el as unknown as Partial<WithCapture>).captureStream === 'function') {
-    return (el as unknown as WithCapture).captureStream();
-  }
-  if (typeof (el as unknown as Partial<WithMozCapture>).mozCaptureStream === 'function') {
-    return (el as unknown as WithMozCapture).mozCaptureStream();
+    stream = (el as unknown as WithCapture).captureStream();
+  } else if (typeof (el as unknown as Partial<WithMozCapture>).mozCaptureStream === 'function') {
+    stream = (el as unknown as WithMozCapture).mozCaptureStream();
+  } else {
+    throw new Error('captureStream not available on this element');
   }
 
-  throw new Error('captureStream not available on this element');
+  // <video> elements expose both audio and video tracks. MediaRecorder rejects
+  // a stream containing video when the requested mimeType is audio-only, so
+  // build a fresh stream from audio tracks only.
+  const audioTracks = stream.getAudioTracks();
+  if (audioTracks.length === 0) {
+    throw new Error('Media element has no audio tracks');
+  }
+  return new MediaStream(audioTracks);
 }
 
 export class StreamRecorder implements IStreamRecorder {

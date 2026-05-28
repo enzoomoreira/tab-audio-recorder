@@ -8,16 +8,27 @@
     "build": "vite build",
     "dev": "vite build --watch",
     "start": "web-ext run --source-dir dist --browser-console",
-    "lint:ext": "web-ext lint --source-dir dist"
+    "lint:ext": "web-ext lint --source-dir dist",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "VITE_TEST_BRIDGE=true bun run build && vitest run --config vitest.e2e.config.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
     "@types/firefox-webext-browser": "^143.0.0",
+    "@types/selenium-webdriver": "^4.35.6",
+    "@vitest/coverage-v8": "^4.1.7",
+    "fake-indexeddb": "^6.2.5",
+    "geckodriver": "^6.1.0",
+    "happy-dom": "^20.9.0",
+    "jest-webextension-mock": "^4.1.1",
+    "selenium-webdriver": "^4.44.0",
     "typescript": "^6.0.3",
     "vite": "^8.0.14",
     "vite-plugin-web-extension": "^4.5.1",
+    "vitest": "^4.1.7",
     "web-ext": "^10.2.0"
   }
 }

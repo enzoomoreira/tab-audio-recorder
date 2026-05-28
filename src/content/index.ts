@@ -124,5 +124,22 @@ if (WIN.__tabAudioRecorderLoaded) {
     }
   }
 
+  // Test bridge: E2E-builds only, localhost-only. Lets specs trigger START/STOP
+  // via dispatchEvent without needing the popup UI. The outer `__TEST_BRIDGE__`
+  // check is replaced by Vite at build time -- production builds (where
+  // VITE_TEST_BRIDGE is not set) strip the entire block as dead code, so no
+  // localhost page can ever reach the background via this path.
+  if (__TEST_BRIDGE__ && (location.hostname === '127.0.0.1' || location.hostname === 'localhost')) {
+    window.addEventListener('tab-audio-recorder-cmd', (event) => {
+      const detail = (event as CustomEvent).detail;
+      if (detail === 'START') {
+        void browser.runtime.sendMessage({ type: 'TEST_START_RECORDING' });
+      } else if (detail === 'STOP') {
+        void browser.runtime.sendMessage({ type: 'TEST_STOP_RECORDING' });
+      }
+    });
+    logger.info('Test bridge enabled on', location.origin);
+  }
+
   logger.info('Loaded');
 }

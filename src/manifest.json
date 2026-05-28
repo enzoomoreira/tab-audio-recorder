@@ -3,6 +3,11 @@
   "name": "Tab Audio Recorder",
   "version": "0.1.0",
   "description": "Record audio from browser tabs for sampling",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "tab-audio-recorder@test"
+    }
+  },
   "permissions": ["tabs", "webRequest", "webNavigation", "storage", "downloads"],
   "host_permissions": ["<all_urls>"],
   "background": {

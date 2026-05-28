@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>07 - audio inside Shadow DOM</title>
+    <script src="lib/audio.js"></script>
+  </head>
+  <body>
+    <h1>07 - &lt;my-player&gt; with &lt;audio&gt; in shadow root</h1>
+    <p>Expected strategy: <strong>DOM via Shadow DOM scan (P1)</strong></p>
+    <my-player></my-player>
+    <button data-testid="start">Start audio</button>
+    <script>
+      window.__expected = { strategy: 'DOM', technique: 'shadow-dom-audio' };
+
+      class MyPlayer extends HTMLElement {
+        constructor() {
+          super();
+          const shadow = this.attachShadow({ mode: 'open' });
+          this.audio = document.createElement('audio');
+          this.audio.src = window.sineWavUrl(10, 523);
+          this.audio.loop = true;
+          this.audio.controls = true;
+          shadow.appendChild(this.audio);
+        }
+      }
+      customElements.define('my-player', MyPlayer);
+
+      const host = document.querySelector('my-player');
+      window.__startAudio = () => host.audio.play();
+      window.__stopAudio = () => host.audio.pause();
+      document
+        .querySelector('[data-testid="start"]')
+        .addEventListener('click', () => window.__startAudio());
+    </script>
+  </body>
+</html>

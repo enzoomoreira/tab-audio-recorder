@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>02 - video with audio track (YouTube regression)</title>
+    <script src="lib/audio.js"></script>
+  </head>
+  <body>
+    <h1>02 - &lt;video&gt; whose captureStream exposes video + audio tracks</h1>
+    <p>Expected strategy: <strong>DOM</strong> -- with video track stripped before MediaRecorder</p>
+    <p>
+      This regression page mirrors the YouTube case: a &lt;video&gt; element
+      with a real video track AND a real audio track. The recorder must build
+      an audio-only stream before instantiating MediaRecorder; otherwise it
+      rejects the audio mimeType with "video track cannot be recorded".
+    </p>
+    <video id="player" autoplay muted playsinline width="320" height="180"></video>
+    <button data-testid="start">Start audio</button>
+    <script>
+      window.__expected = { strategy: 'DOM', technique: 'video-with-real-av-tracks' };
+
+      const video = document.getElementById('player');
+      let session = null;
+
+      window.__startAudio = () => {
+        if (session) return;
+        session = window.combinedAVStream(660);
+        video.srcObject = session.stream;
+        // The video is `muted` so the page itself stays silent during the test
+        // (we don't want the user to hear the test tone). The audio track is
+        // still present on the stream returned by captureStream() because the
+        // mute state of the element only affects local playback, not capture.
+        video.play();
+      };
+      window.__stopAudio = () => {
+        if (session) {
+          session.stop();
+          session = null;
+        }
+      };
+      document
+        .querySelector('[data-testid="start"]')
+        .addEventListener('click', () => window.__startAudio());
+    </script>
+  </body>
+</html>

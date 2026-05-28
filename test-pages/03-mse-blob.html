@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>03 - MSE blob (MediaSource feeding audio)</title>
+  </head>
+  <body>
+    <h1>03 - &lt;audio src="blob:..."&gt; fed by MediaSource API</h1>
+    <p>Expected strategy: <strong>DOM</strong> (captureStream on MSE-fed element)</p>
+    <p>
+      Mirrors YouTube/SoundCloud: an audio element whose src is a blob URL
+      backed by MediaSource. Append a bundled opus-in-webm file via SourceBuffer.
+    </p>
+    <audio id="player" controls></audio>
+    <button data-testid="start">Start audio</button>
+    <p id="status">loading...</p>
+    <script>
+      window.__expected = { strategy: 'DOM', technique: 'mse-blob-source' };
+
+      const player = document.getElementById('player');
+      const status = document.getElementById('status');
+      const MIME = 'audio/webm; codecs="opus"';
+
+      let ready = false;
+      window.__mseReady = () => ready; // exposed for E2E polling
+
+      async function setupMSE() {
+        if (!('MediaSource' in window) || !MediaSource.isTypeSupported(MIME)) {
+          status.textContent = 'MediaSource or codec not supported';
+          return;
+        }
+
+        const ms = new MediaSource();
+        player.src = URL.createObjectURL(ms);
+
+        await new Promise((resolve) => ms.addEventListener('sourceopen', resolve, { once: true }));
+
+        const sb = ms.addSourceBuffer(MIME);
+        const res = await fetch('assets/sample.webm');
+        if (!res.ok) throw new Error(`sample.webm fetch failed: ${res.status}`);
+        const bytes = new Uint8Array(await res.arrayBuffer());
+
+        sb.appendBuffer(bytes);
+        await new Promise((resolve) => sb.addEventListener('updateend', resolve, { once: true }));
+        if (ms.readyState === 'open') ms.endOfStream();
+
+        ready = true;
+        status.textContent = `MSE ready (${bytes.length} bytes appended). Click Start.`;
+      }
+
+      window.__startAudio = () => {
+        if (!ready) {
+          status.textContent = 'still preparing MSE...';
+          return;
+        }
+        player.loop = true;
+        player.play();
+      };
+      window.__stopAudio = () => player.pause();
+      document
+        .querySelector('[data-testid="start"]')
+        .addEventListener('click', () => window.__startAudio());
+
+      setupMSE().catch((err) => {
+        status.textContent = `MSE setup failed: ${err}`;
+      });
+    </script>
+  </body>
+</html>

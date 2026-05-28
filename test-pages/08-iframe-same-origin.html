@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>08 - same-origin iframe</title>
+  </head>
+  <body>
+    <h1>08 - same-origin iframe embedding 01</h1>
+    <p>Expected strategy: <strong>DOM via iframe scan (P1)</strong></p>
+    <iframe id="frame" src="01-audio-src-direct.html" width="500" height="120"></iframe>
+    <button data-testid="start">Start audio</button>
+    <script>
+      window.__expected = { strategy: 'DOM', technique: 'iframe-same-origin' };
+
+      const frame = document.getElementById('frame');
+      window.__startAudio = () => frame.contentWindow.__startAudio();
+      window.__stopAudio = () => frame.contentWindow.__stopAudio();
+      document
+        .querySelector('[data-testid="start"]')
+        .addEventListener('click', () => window.__startAudio());
+    </script>
+  </body>
+</html>

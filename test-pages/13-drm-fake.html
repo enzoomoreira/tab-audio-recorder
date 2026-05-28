@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>13 - DRM fake (P4 validation)</title>
+    <script src="lib/audio.js"></script>
+  </head>
+  <body>
+    <h1>13 - &lt;audio&gt; with faked mediaKeys (P4 check)</h1>
+    <p>Expected outcome: <strong>recording refused with "DRM/EME content cannot be captured"</strong></p>
+    <p>
+      We stub <code>element.mediaKeys</code> via Object.defineProperty so the
+      P4 check in StreamRecorder treats this element as if it were EME-protected.
+      Real DRM (Spotify, Apple Music) would set this via setMediaKeys(); the
+      check in our code is a simple <code>!= null</code> guard.
+    </p>
+    <audio id="player" controls></audio>
+    <button data-testid="start">Start audio</button>
+    <script>
+      window.__expected = { strategy: 'ERROR', technique: 'drm-eme-detected' };
+
+      const player = document.getElementById('player');
+      player.src = window.sineWavUrl(10, 440);
+      player.loop = true;
+      Object.defineProperty(player, 'mediaKeys', {
+        get: () => ({ fake: true }),
+        configurable: true,
+      });
+      window.__startAudio = () => player.play();
+      window.__stopAudio = () => player.pause();
+      document
+        .querySelector('[data-testid="start"]')
+        .addEventListener('click', () => window.__startAudio());
+    </script>
+  </body>
+</html>
