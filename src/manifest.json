@@ -3,7 +3,7 @@
   "name": "Tab Audio Recorder",
   "version": "0.1.0",
   "description": "Record audio from browser tabs for sampling",
-  "permissions": ["tabs", "webRequest"],
+  "permissions": ["tabs", "webRequest", "webNavigation", "storage", "downloads"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "scripts": ["background/index.ts"],
@@ -12,11 +12,31 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
+      "js": ["content/AudioContextHook.ts"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    },
+    {
+      "matches": ["<all_urls>"],
       "js": ["content/index.ts"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true
     }
   ],
   "action": {
     "default_popup": "popup/index.html"
+  },
+  "options_ui": {
+    "page": "settings/index.html",
+    "open_in_tab": true
+  },
+  "commands": {
+    "record-toggle": {
+      "suggested_key": {
+        "default": "Alt+Shift+R"
+      },
+      "description": "Start or stop recording on the active tab"
+    }
   }
 }

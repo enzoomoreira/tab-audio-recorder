@@ -93,4 +93,15 @@ export class IndexedDBRepository implements IRepository {
     );
     return entry?.blob ?? null;
   }
+
+  async getById(id: string): Promise<Recording | null> {
+    const db = await this.db;
+    const tx = db.transaction([STORE_META, STORE_BLOBS], 'readonly');
+    const [meta, blobEntry] = await Promise.all([
+      req<RecordingMetadata | undefined>(tx.objectStore(STORE_META).get(id)),
+      req<{ id: string; blob: Blob } | undefined>(tx.objectStore(STORE_BLOBS).get(id)),
+    ]);
+    if (!meta || !blobEntry) return null;
+    return { metadata: meta, blob: blobEntry.blob };
+  }
 }

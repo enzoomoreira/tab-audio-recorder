@@ -1,4 +1,5 @@
-import { createLogger } from '../shared/Logger';
+import { createLogger, setVerbose } from '../shared/Logger';
+import { getSettings } from '../shared/Settings';
 import { AudioPlayer } from './AudioPlayer';
 import type { RecordingMetadata, SortField, SortDirection } from '../types';
 
@@ -51,11 +52,6 @@ function escapeHtml(str: string): string {
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
-}
-
-function extFromMime(mime: string): string {
-  if (mime.includes('ogg')) return 'ogg';
-  return 'webm';
 }
 
 async function loadRecordings(): Promise<void> {
@@ -149,24 +145,28 @@ function buildCard(meta: RecordingMetadata): HTMLLIElement {
     exportBtn.disabled = true;
     exportBtn.textContent = 'Exporting...';
 
-    const url = await ensureObjectURL();
-    if (!url) {
+    // Background owns the export pipeline (template, subfolder, downloads API).
+    // This keeps the lazy-loaded objectURL cache for in-page playback only.
+    const result: { ok: boolean; error?: string } = await browser.runtime.sendMessage({
+      type: 'EXPORT_RECORDING',
+      payload: { id: meta.id },
+    });
+
+    if (!result.ok) {
       exportBtn.textContent = 'Error';
-      exportBtn.disabled = false;
+      logger.error('Export failed:', result.error);
+      setTimeout(() => {
+        exportBtn.textContent = 'Export';
+        exportBtn.disabled = false;
+      }, 1500);
       return;
     }
 
-    const ext = extFromMime(meta.mimeType);
-    const dateStr = new Date(meta.startedAt).toISOString().slice(0, 19).replace(/[:.]/g, '-');
-    const filename = `${meta.sourceHost}_${dateStr}.${ext}`;
-
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-
-    exportBtn.textContent = 'Export';
-    exportBtn.disabled = false;
+    exportBtn.textContent = 'Exported';
+    setTimeout(() => {
+      exportBtn.textContent = 'Export';
+      exportBtn.disabled = false;
+    }, 1500);
   });
 
   deleteBtn.addEventListener('click', async () => {
@@ -198,4 +198,12 @@ hostFilterEl.addEventListener('input', reloadDebounced);
 sortFieldEl.addEventListener('change', () => void loadRecordings());
 sortDirEl.addEventListener('change', () => void loadRecordings());
 
-void loadRecordings();
+async function init(): Promise<void> {
+  const settings = await getSettings();
+  setVerbose(settings.verboseLogging);
+  sortFieldEl.value = settings.defaultSortField;
+  sortDirEl.value = settings.defaultSortDirection;
+  await loadRecordings();
+}
+
+void init();

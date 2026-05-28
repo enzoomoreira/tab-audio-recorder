@@ -7,6 +7,7 @@ const statusEl = document.getElementById('status')!;
 const recordBtn = document.getElementById('recordBtn') as HTMLButtonElement;
 const errorEl = document.getElementById('error')!;
 const managerBtn = document.getElementById('managerBtn')!;
+const settingsBtn = document.getElementById('settingsBtn')!;
 
 let tabId: number | null = null;
 let state: TabRecordingState = 'idle';
@@ -91,6 +92,11 @@ recordBtn.addEventListener('click', async () => {
 
 managerBtn.addEventListener('click', () => {
   void browser.runtime.sendMessage({ type: 'OPEN_MANAGER' });
+  window.close();
+});
+
+settingsBtn.addEventListener('click', () => {
+  void browser.runtime.openOptionsPage();
   window.close();
 });
 

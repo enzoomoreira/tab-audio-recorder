@@ -5,12 +5,26 @@ import {
   getTabState,
   onTabRemoved,
   onMediaURLDetected,
+  exportRecordingById,
   repository,
 } from './Orchestrator';
-import { createLogger } from '../shared/Logger';
+import { createLogger, setVerbose } from '../shared/Logger';
+import { getSettings, onSettingsChanged } from '../shared/Settings';
 
 const logger = createLogger('Background');
 
+// --- Boot: load settings, apply verbose flag, subscribe to changes ---
+void (async () => {
+  const settings = await getSettings();
+  setVerbose(settings.verboseLogging);
+  logger.info('Background initialized, verbose logging:', settings.verboseLogging);
+})();
+
+onSettingsChanged((settings) => {
+  setVerbose(settings.verboseLogging);
+});
+
+// --- Message router ---
 browser.runtime.onMessage.addListener(
   (message: { type: string; payload?: unknown }, sender): Promise<unknown> | undefined => {
     const { type, payload } = message as { type: string; payload: Record<string, unknown> };
@@ -33,6 +47,11 @@ browser.runtime.onMessage.addListener(
       return undefined;
     }
 
+    if (type === 'OPEN_SETTINGS') {
+      void browser.runtime.openOptionsPage();
+      return undefined;
+    }
+
     // --- Content script ---
     if (type === 'RECORDING_COMPLETE') {
       const tabId = sender.tab?.id;
@@ -49,7 +68,10 @@ browser.runtime.onMessage.addListener(
 
     // --- Manager ---
     if (type === 'LIST_RECORDINGS') {
-      const p = payload as unknown as { filter?: Parameters<typeof repository.list>[0]; sort?: Parameters<typeof repository.list>[1] };
+      const p = payload as unknown as {
+        filter?: Parameters<typeof repository.list>[0];
+        sort?: Parameters<typeof repository.list>[1];
+      };
       return repository.list(p.filter, p.sort);
     }
 
@@ -61,16 +83,17 @@ browser.runtime.onMessage.addListener(
       return repository.getBlobById((payload as { id: string }).id);
     }
 
+    if (type === 'EXPORT_RECORDING') {
+      return exportRecordingById((payload as { id: string }).id);
+    }
+
     return undefined;
   },
 );
 
 browser.tabs.onRemoved.addListener(onTabRemoved);
 
-// Detect audio stream URLs from response Content-Type headers.
-// This is more precise than filtering request types: we only cache URLs where
-// the server actually responded with audio/* (covers mp3, ogg, aac, webm, etc.).
-// Runs always so the URL is ready before the user clicks Record.
+// --- webRequest: detect audio stream URLs by Content-Type ---
 browser.webRequest.onHeadersReceived.addListener(
   (details) => {
     if (details.tabId <= 0) return;
@@ -78,11 +101,31 @@ browser.webRequest.onHeadersReceived.addListener(
       ?.find((h) => h.name.toLowerCase() === 'content-type')
       ?.value ?? '';
     if (ct.startsWith('audio/') || ct.includes('mpegURL') || ct.includes('ogg')) {
-      onMediaURLDetected(details.tabId, details.url);
+      onMediaURLDetected(details.tabId, details.frameId, details.url);
     }
   },
   { urls: ['<all_urls>'] },
   ['responseHeaders'],
 );
 
-logger.info('Background initialized');
+// --- Hotkey: record-toggle ---
+browser.commands.onCommand.addListener(async (command) => {
+  if (command !== 'record-toggle') return;
+
+  const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) {
+    logger.warn('record-toggle: no active tab');
+    return;
+  }
+
+  const state = getTabState(tab.id);
+  if (state === 'idle') {
+    const result = await startRecording(tab.id);
+    if (!result.ok) logger.warn('record-toggle start failed:', result.error);
+  } else if (state === 'recording') {
+    const result = await stopRecording(tab.id);
+    if (!result.ok) logger.warn('record-toggle stop failed:', result.error);
+  } else {
+    logger.debug('record-toggle ignored, tab is processing');
+  }
+});

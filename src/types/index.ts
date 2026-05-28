@@ -38,6 +38,7 @@ export interface IRepository {
   list(filter?: RecordingFilter, sort?: SortOptions): Promise<RecordingMetadata[]>;
   deleteById(id: string): Promise<void>;
   getBlobById(id: string): Promise<Blob | null>;
+  getById(id: string): Promise<Recording | null>;
 }
 
 // === Media capture ===
@@ -62,7 +63,7 @@ export interface IRecorder {
 }
 
 export interface IStreamRecorder extends IRecorder {
-  start(element: HTMLMediaElement): void;
+  start(element: HTMLMediaElement, bitrate: number): void;
 }
 
 export interface INetworkRecorder extends IRecorder {
@@ -75,8 +76,9 @@ export interface INetworkRecorder extends IRecorder {
 // Background -> Content
 export type BgToContentMessage =
   | { type: 'CHECK_MEDIA' }
-  | { type: 'START_CAPTURE' }
+  | { type: 'START_CAPTURE'; payload: { bitrate: number } }
   | { type: 'START_NETWORK_CAPTURE'; payload: { url: string } }
+  | { type: 'START_WEBAUDIO_CAPTURE'; payload: { bitrate: number } }
   | { type: 'STOP_CAPTURE' };
 
 // Content -> Background (proactive, not a reply)
@@ -95,7 +97,8 @@ export type PopupToBgMessage =
 export type ManagerToBgMessage =
   | { type: 'LIST_RECORDINGS'; payload: { filter?: RecordingFilter; sort?: SortOptions } }
   | { type: 'DELETE_RECORDING'; payload: { id: string } }
-  | { type: 'GET_BLOB'; payload: { id: string } };
+  | { type: 'GET_BLOB'; payload: { id: string } }
+  | { type: 'EXPORT_RECORDING'; payload: { id: string } };
 
 export type TabRecordingState = 'idle' | 'recording' | 'processing';
 

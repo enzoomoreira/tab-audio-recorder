@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [
     webExtension({
       browser: 'firefox',
-      additionalInputs: ['manager/index.html'],
+      additionalInputs: ['manager/index.html', 'settings/index.html'],
     }),
   ],
   build: {

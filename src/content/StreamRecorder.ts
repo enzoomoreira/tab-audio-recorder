@@ -42,9 +42,17 @@ export class StreamRecorder implements IStreamRecorder {
   private mimeType = '';
   private startedAt = 0;
 
-  start(element: HTMLMediaElement): void {
+  start(element: HTMLMediaElement, bitrate: number): void {
     if (this.recorder) {
       throw new Error('Already recording');
+    }
+
+    // EME/DRM-protected playback yields a silent capture stream in Firefox.
+    // Surface this up-front instead of recording silence.
+    const raw =
+      (element as unknown as { wrappedJSObject?: HTMLMediaElement }).wrappedJSObject ?? element;
+    if ((raw as unknown as { mediaKeys?: unknown }).mediaKeys != null) {
+      throw new Error('DRM/EME content cannot be captured (Firefox security policy)');
     }
 
     const stream = captureStream(element);
@@ -52,7 +60,7 @@ export class StreamRecorder implements IStreamRecorder {
     this.chunks = [];
     this.startedAt = Date.now();
 
-    const options: MediaRecorderOptions = { audioBitsPerSecond: 128_000 };
+    const options: MediaRecorderOptions = { audioBitsPerSecond: bitrate };
     if (mimeType) options.mimeType = mimeType;
 
     this.recorder = new MediaRecorder(stream, options);

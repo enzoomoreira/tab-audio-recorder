@@ -1,5 +1,14 @@
 const PREFIX = 'TabAudioRec';
 
+// Global flag for the current JS context. Defaults to false so production
+// behavior is quiet; each context (background, popup, manager, settings)
+// can call setVerbose() with the loaded setting on boot.
+let verboseEnabled = false;
+
+export function setVerbose(enabled: boolean): void {
+  verboseEnabled = enabled;
+}
+
 class Logger {
   private tag: string;
 
@@ -8,6 +17,7 @@ class Logger {
   }
 
   debug(...args: unknown[]): void {
+    if (!verboseEnabled) return;
     console.debug(this.tag, ...args);
   }
 

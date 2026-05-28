@@ -1,6 +1,7 @@
 import { DOMScanner } from './DOMScanner';
 import { StreamRecorder } from './StreamRecorder';
 import { NetworkRecorder } from './NetworkRecorder';
+import { WebAudioRecorder } from './WebAudioRecorder';
 import { createLogger } from '../shared/Logger';
 import type { BgToContentMessage, IRecorder } from '../types';
 import type { DiagnosticReport } from './DOMScanner';
@@ -24,11 +25,15 @@ if (WIN.__tabAudioRecorderLoaded) {
       }
 
       if (message.type === 'START_CAPTURE') {
-        return handleStartDOM();
+        return handleStartDOM(message.payload.bitrate);
       }
 
       if (message.type === 'START_NETWORK_CAPTURE') {
         return handleStartNetwork(message.payload.url);
+      }
+
+      if (message.type === 'START_WEBAUDIO_CAPTURE') {
+        return handleStartWebAudio(message.payload.bitrate);
       }
 
       if (message.type === 'STOP_CAPTURE') {
@@ -44,7 +49,7 @@ if (WIN.__tabAudioRecorderLoaded) {
     },
   );
 
-  async function handleStartDOM(): Promise<{ ok: boolean; error?: string }> {
+  async function handleStartDOM(bitrate: number): Promise<{ ok: boolean; error?: string }> {
     if (activeRecorder?.isRecording()) {
       return { ok: false, error: 'Already recording' };
     }
@@ -54,7 +59,7 @@ if (WIN.__tabAudioRecorderLoaded) {
     }
     try {
       const rec = new StreamRecorder();
-      rec.start(element);
+      rec.start(element, bitrate);
       activeRecorder = rec;
       return { ok: true };
     } catch (err) {
@@ -76,6 +81,26 @@ if (WIN.__tabAudioRecorderLoaded) {
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       logger.error('Network capture start failed:', error);
+      return { ok: false, error };
+    }
+  }
+
+  async function handleStartWebAudio(bitrate: number): Promise<{ ok: boolean; error?: string }> {
+    if (activeRecorder?.isRecording()) {
+      return { ok: false, error: 'Already recording' };
+    }
+    try {
+      const rec = new WebAudioRecorder();
+      const hasContexts = await rec.probe();
+      if (!hasContexts) {
+        return { ok: false, error: 'No AudioContext detected on this page' };
+      }
+      await rec.start(bitrate);
+      activeRecorder = rec;
+      return { ok: true };
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      logger.error('WebAudio capture start failed:', error);
       return { ok: false, error };
     }
   }
