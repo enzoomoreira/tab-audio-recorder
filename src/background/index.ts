@@ -4,6 +4,7 @@ import {
   saveRecording,
   getTabState,
   onTabRemoved,
+  onMediaURLDetected,
   repository,
 } from './Orchestrator';
 import { createLogger } from '../shared/Logger';
@@ -65,5 +66,23 @@ browser.runtime.onMessage.addListener(
 );
 
 browser.tabs.onRemoved.addListener(onTabRemoved);
+
+// Detect audio stream URLs from response Content-Type headers.
+// This is more precise than filtering request types: we only cache URLs where
+// the server actually responded with audio/* (covers mp3, ogg, aac, webm, etc.).
+// Runs always so the URL is ready before the user clicks Record.
+browser.webRequest.onHeadersReceived.addListener(
+  (details) => {
+    if (details.tabId <= 0) return;
+    const ct = details.responseHeaders
+      ?.find((h) => h.name.toLowerCase() === 'content-type')
+      ?.value ?? '';
+    if (ct.startsWith('audio/') || ct.includes('mpegURL') || ct.includes('ogg')) {
+      onMediaURLDetected(details.tabId, details.url);
+    }
+  },
+  { urls: ['<all_urls>'] },
+  ['responseHeaders'],
+);
 
 logger.info('Background initialized');

@@ -3,7 +3,7 @@
   "name": "Tab Audio Recorder",
   "version": "0.1.0",
   "description": "Record audio from browser tabs for sampling",
-  "permissions": ["tabs"],
+  "permissions": ["tabs", "webRequest"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "scripts": ["background/index.ts"],

@@ -55,10 +55,18 @@ export interface CaptureResult {
   endedAt: number;
 }
 
-export interface IStreamRecorder {
-  start(element: HTMLMediaElement): void;
+// Shared interface for both capture strategies (DOM element vs network fetch)
+export interface IRecorder {
   stop(): Promise<CaptureResult>;
   isRecording(): boolean;
+}
+
+export interface IStreamRecorder extends IRecorder {
+  start(element: HTMLMediaElement): void;
+}
+
+export interface INetworkRecorder extends IRecorder {
+  start(url: string): void;
 }
 
 // === Message bus ===
@@ -68,6 +76,7 @@ export interface IStreamRecorder {
 export type BgToContentMessage =
   | { type: 'CHECK_MEDIA' }
   | { type: 'START_CAPTURE' }
+  | { type: 'START_NETWORK_CAPTURE'; payload: { url: string } }
   | { type: 'STOP_CAPTURE' };
 
 // Content -> Background (proactive, not a reply)
