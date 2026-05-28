@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tab Audio Recorder</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="container">
+      <p class="label">Tab Audio Recorder</p>
+      <p class="status" id="status">Checking...</p>
+      <button class="record-btn" id="recordBtn" disabled aria-label="Record">
+        <span class="record-dot"></span>
+      </button>
+      <p class="error" id="error" hidden></p>
+      <button class="manager-btn" id="managerBtn">View recordings</button>
+    </div>
+    <script type="module" src="./index.ts"></script>
+  </body>
+</html>
