@@ -100,17 +100,19 @@ function buildCard(meta: RecordingMetadata): HTMLLIElement {
   li.className = 'card';
   li.dataset['id'] = meta.id;
 
+  // <audio> starts hidden — revealed only after the blob is loaded and playback starts.
+  // This avoids showing an empty/broken player to the user.
   li.innerHTML = `
     <div class="card__header">
       <span class="card__host">${escapeHtml(meta.sourceHost)}</span>
       <span class="card__date">${escapeHtml(formatDate(meta.startedAt))}</span>
     </div>
     <div class="card__title" title="${escapeHtml(meta.sourceTitle)}">${escapeHtml(meta.sourceTitle)}</div>
-    <audio class="card__player" controls preload="none" aria-label="Recording player"></audio>
+    <audio class="card__player" controls preload="none" aria-label="Recording player" hidden></audio>
     <div class="card__footer">
       <span class="card__meta">${formatDuration(meta.durationMs)} &middot; ${formatSize(meta.sizeBytes)} &middot; ${escapeHtml(meta.mimeType.split(';')[0] ?? meta.mimeType)}</span>
       <div class="card__actions">
-        <button class="btn btn--load" data-action="load">Load audio</button>
+        <button class="btn btn--play" data-action="play">Play</button>
         <button class="btn btn--save" data-action="save">Save file</button>
         <button class="btn btn--danger" data-action="delete">Delete</button>
       </div>
@@ -118,44 +120,51 @@ function buildCard(meta: RecordingMetadata): HTMLLIElement {
   `;
 
   const audio = li.querySelector('.card__player') as HTMLAudioElement;
-  const loadBtn = li.querySelector('[data-action="load"]') as HTMLButtonElement;
+  const playBtn = li.querySelector('[data-action="play"]') as HTMLButtonElement;
   const saveBtn = li.querySelector('[data-action="save"]') as HTMLButtonElement;
   const deleteBtn = li.querySelector('[data-action="delete"]') as HTMLButtonElement;
 
-  async function fetchBlob(): Promise<Blob | null> {
-    return browser.runtime.sendMessage({ type: 'GET_BLOB', payload: { id: meta.id } });
-  }
+  // Fetches the blob once and caches the object URL for subsequent Save calls.
+  async function ensureObjectURL(): Promise<string | null> {
+    const cached = objectURLs.get(meta.id);
+    if (cached) return cached;
 
-  function getOrCreateObjectURL(blob: Blob): string {
-    let url = objectURLs.get(meta.id);
-    if (!url) {
-      url = URL.createObjectURL(blob);
-      objectURLs.set(meta.id, url);
-    }
+    const blob: Blob | null = await browser.runtime.sendMessage({
+      type: 'GET_BLOB',
+      payload: { id: meta.id },
+    });
+    if (!blob) return null;
+
+    const url = URL.createObjectURL(blob);
+    objectURLs.set(meta.id, url);
     return url;
   }
 
-  loadBtn.addEventListener('click', async () => {
-    loadBtn.disabled = true;
-    loadBtn.textContent = 'Loading...';
+  // Play button: load blob, reveal player, start playback, then hide itself
+  // (the native audio controls take over from that point).
+  playBtn.addEventListener('click', async () => {
+    playBtn.disabled = true;
+    playBtn.textContent = 'Loading...';
 
-    const blob = await fetchBlob();
-    if (!blob) {
-      loadBtn.textContent = 'Error';
+    const url = await ensureObjectURL();
+    if (!url) {
+      playBtn.textContent = 'Error';
+      playBtn.disabled = false;
       return;
     }
 
-    audio.src = getOrCreateObjectURL(blob);
+    audio.src = url;
+    audio.hidden = false;
     void audio.play();
-    loadBtn.textContent = 'Loaded';
+    playBtn.hidden = true; // native controls replace the button from here
   });
 
   saveBtn.addEventListener('click', async () => {
     saveBtn.disabled = true;
-    saveBtn.textContent = 'Preparing...';
+    saveBtn.textContent = 'Saving...';
 
-    const blob = await fetchBlob();
-    if (!blob) {
+    const url = await ensureObjectURL();
+    if (!url) {
       saveBtn.textContent = 'Error';
       saveBtn.disabled = false;
       return;
@@ -166,7 +175,7 @@ function buildCard(meta: RecordingMetadata): HTMLLIElement {
     const filename = `${meta.sourceHost}_${dateStr}.${ext}`;
 
     const a = document.createElement('a');
-    a.href = getOrCreateObjectURL(blob);
+    a.href = url;
     a.download = filename;
     a.click();
 
@@ -179,7 +188,6 @@ function buildCard(meta: RecordingMetadata): HTMLLIElement {
 
     deleteBtn.disabled = true;
 
-    // Revoke any open object URL for this blob
     const url = objectURLs.get(meta.id);
     if (url) {
       URL.revokeObjectURL(url);
