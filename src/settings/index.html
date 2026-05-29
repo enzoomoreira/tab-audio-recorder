@@ -21,9 +21,10 @@
             <label for="bitrate">Audio bitrate</label>
             <select id="bitrate" class="select"></select>
             <p class="field__hint">
-              Higher bitrate = larger files, better quality. Only affects sites with HTML
-              <code>&lt;audio&gt;</code> / <code>&lt;video&gt;</code> elements. Network streams
-              (e.g. radio.garden) are recorded at source quality regardless.
+              Higher bitrate = larger files, better quality. Affects capture from HTML
+              <code>&lt;audio&gt;</code> / <code>&lt;video&gt;</code> elements and is reused as the
+              MP3 export bitrate. Network streams (e.g. radio.garden) are captured at source quality
+              regardless.
             </p>
           </div>
 
@@ -41,6 +42,16 @@
         <!-- Export -->
         <section class="section">
           <h2 class="section__title">Export</h2>
+
+          <div class="field">
+            <label for="exportFormat">Export format</label>
+            <select id="exportFormat" class="select"></select>
+            <p class="field__hint">
+              Recordings are captured as WebM/Opus and converted on export.
+              <strong>WAV</strong> is lossless (larger files); <strong>MP3</strong> is smaller and
+              uses the bitrate above for its quality.
+            </p>
+          </div>
 
           <div class="field">
             <label for="exportSubfolder">Subfolder within Downloads</label>

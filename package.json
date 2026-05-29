@@ -38,5 +38,8 @@
     "vite-plugin-web-extension": "^4.5.1",
     "vitest": "^4.1.7",
     "web-ext": "^10.2.0"
+  },
+  "dependencies": {
+    "@breezystack/lamejs": "^1.2.7"
   }
 }

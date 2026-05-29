@@ -113,3 +113,8 @@ export type InboundMessage =
 export type TabRecordingState = 'idle' | 'recording' | 'processing';
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
+
+// === Export ===
+// Recordings are captured as WebM/Opus; on export they are decoded and
+// re-encoded to one of these target formats.
+export type ExportFormat = 'wav' | 'mp3';

@@ -17,8 +17,12 @@ synthesize sound through the Web Audio API.
      destination for sites that play purely through the Web Audio API.
 - **Recordings manager** with per-site filtering, sorting, an inline lazy-loading
   player, export, and delete.
-- **Settings**: bitrate, max recording length (memory guard), export subfolder,
-  filename template, auto-export, storage cap with auto-cleanup, verbose logging.
+- **Export format**: recordings are captured as WebM/Opus and converted on
+  export to **WAV** (lossless, larger) or **MP3** (smaller, uses the recording
+  bitrate). Conversion runs in the background, so auto-export honors the choice.
+- **Settings**: bitrate, max recording length (memory guard), export format,
+  export subfolder, filename template, auto-export, storage cap with
+  auto-cleanup, verbose logging.
 - **Hotkey**: `Alt+Shift+R` toggles recording on the active tab.
 - **DRM-aware**: EME/DRM-protected playback is detected and refused up front
   instead of saving silence.
@@ -69,10 +73,11 @@ a WebExtension:
   `AudioContextHook` (MAIN-world Web Audio tap).
 - `src/manager/`, `src/popup/`, `src/settings/` — the three UI surfaces.
 - `src/shared/` — `Repository` (IndexedDB), `Settings`, `Logger`,
-  `FilenameTemplate`, `SessionState`.
+  `FilenameTemplate`, `SessionState`, `AudioEncoder` (WAV/MP3 transcode).
 - `src/types/` — the domain model and the discriminated-union message bus.
 
-Recordings are stored in IndexedDB (metadata + blob). Export uses the
+Recordings are stored in IndexedDB (metadata + blob). Export decodes the blob,
+re-encodes it to the chosen format (`AudioEncoder`), and saves it through the
 `downloads` API with a user-defined filename template.
 
 ## Permissions

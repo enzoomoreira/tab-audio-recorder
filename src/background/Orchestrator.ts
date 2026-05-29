@@ -2,6 +2,7 @@ import { IndexedDBRepository } from '../shared/Repository';
 import { createLogger } from '../shared/Logger';
 import { getSettings } from '../shared/Settings';
 import { applyTemplate } from '../shared/FilenameTemplate';
+import { encodeForExport } from '../shared/AudioEncoder';
 import { SessionState } from '../shared/SessionState';
 import type {
   TabRecordingState,
@@ -323,18 +324,34 @@ export async function saveRecording(tabId: number, result: CaptureResult): Promi
 }
 
 /**
- * Triggers a browser download of the recording using the user's template
- * and subfolder settings. The object URL is revoked once the download
- * reaches a terminal state.
+ * Decodes the recording, re-encodes it to the user's chosen export format
+ * (WAV/MP3), and triggers a browser download using the template and subfolder
+ * settings. The object URL is revoked once the download reaches a terminal
+ * state.
  */
 export async function exportRecording(recording: Recording): Promise<ActionResult> {
   const settings = await getSettings();
-  const filename = applyTemplate(settings.filenameTemplate, recording.metadata);
+
+  let encoded;
+  try {
+    encoded = await encodeForExport(recording.blob, settings.exportFormat, {
+      mp3Kbps: Math.round(settings.bitrate / 1000),
+    });
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    logger.error('Encoding failed:', error);
+    return {
+      ok: false,
+      error: `Could not encode to ${settings.exportFormat.toUpperCase()}: ${error}`,
+    };
+  }
+
+  const filename = applyTemplate(settings.filenameTemplate, recording.metadata, encoded.extension);
   const path = settings.exportSubfolder.trim()
     ? `${settings.exportSubfolder.trim()}/${filename}`
     : filename;
 
-  const url = URL.createObjectURL(recording.blob);
+  const url = URL.createObjectURL(encoded.blob);
 
   try {
     const downloadId = await browser.downloads.download({

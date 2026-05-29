@@ -7,14 +7,16 @@ import {
   type Settings,
 } from '../shared/Settings';
 import { applyTemplate, validateTemplate } from '../shared/FilenameTemplate';
+import { FORMAT_META, EXPORT_FORMATS } from '../shared/exportFormats';
 import { createLogger, setVerbose } from '../shared/Logger';
-import type { RecordingMetadata, SortField, SortDirection } from '../types';
+import type { RecordingMetadata, SortField, SortDirection, ExportFormat } from '../types';
 
 const logger = createLogger('Settings');
 
 // --- DOM refs ---
 const bitrateEl = document.getElementById('bitrate') as HTMLSelectElement;
 const maxDurationSecEl = document.getElementById('maxDurationSec') as HTMLInputElement;
+const exportFormatEl = document.getElementById('exportFormat') as HTMLSelectElement;
 const exportSubfolderEl = document.getElementById('exportSubfolder') as HTMLInputElement;
 const autoExportEl = document.getElementById('autoExport') as HTMLInputElement;
 const filenameTemplateEl = document.getElementById('filenameTemplate') as HTMLInputElement;
@@ -53,9 +55,24 @@ function populateBitrateOptions(): void {
   }
 }
 
+function populateExportFormatOptions(): void {
+  for (const fmt of EXPORT_FORMATS) {
+    const opt = document.createElement('option');
+    opt.value = fmt;
+    opt.textContent = FORMAT_META[fmt].label;
+    exportFormatEl.appendChild(opt);
+  }
+}
+
+function currentExtension(): string {
+  const fmt = exportFormatEl.value as ExportFormat;
+  return FORMAT_META[fmt]?.extension ?? FORMAT_META[DEFAULT_SETTINGS.exportFormat].extension;
+}
+
 function applyToForm(s: Settings): void {
   bitrateEl.value = String(s.bitrate);
   maxDurationSecEl.value = String(s.maxDurationSec);
+  exportFormatEl.value = s.exportFormat;
   exportSubfolderEl.value = s.exportSubfolder;
   autoExportEl.checked = s.autoExport;
   filenameTemplateEl.value = s.filenameTemplate;
@@ -70,6 +87,7 @@ function readForm(): Settings {
   return {
     bitrate: Number(bitrateEl.value),
     maxDurationSec: Math.max(0, Number(maxDurationSecEl.value) || 0),
+    exportFormat: exportFormatEl.value as ExportFormat,
     exportSubfolder: exportSubfolderEl.value.trim(),
     autoExport: autoExportEl.checked,
     filenameTemplate: filenameTemplateEl.value,
@@ -90,7 +108,7 @@ function updateTemplatePreview(template: string): void {
   }
   templateErrorEl.hidden = true;
   try {
-    templatePreviewEl.textContent = applyTemplate(template, PREVIEW_METADATA);
+    templatePreviewEl.textContent = applyTemplate(template, PREVIEW_METADATA, currentExtension());
   } catch (err) {
     templatePreviewEl.textContent = '—';
     logger.error('Preview render failed:', err);
@@ -140,6 +158,12 @@ function bindEvents(): void {
     el.addEventListener('change', () => void scheduleSave());
   }
 
+  // Format change saves and refreshes the preview (the extension changes).
+  exportFormatEl.addEventListener('change', () => {
+    updateTemplatePreview(filenameTemplateEl.value);
+    void scheduleSave();
+  });
+
   // Template needs live preview AND debounced save
   filenameTemplateEl.addEventListener('input', () => {
     updateTemplatePreview(filenameTemplateEl.value);
@@ -159,6 +183,7 @@ async function init(): Promise<void> {
   const settings = await getSettings();
   setVerbose(settings.verboseLogging);
   populateBitrateOptions();
+  populateExportFormatOptions();
   applyToForm(settings);
   bindEvents();
   logger.info('Settings page initialized');

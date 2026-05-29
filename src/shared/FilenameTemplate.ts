@@ -24,15 +24,6 @@ function sanitize(s: string): string {
   return s.replace(FILESYSTEM_INVALID, '_').trim();
 }
 
-function extFromMime(mime: string): string {
-  const main = mime.split(';')[0]?.trim().toLowerCase() ?? '';
-  if (main.includes('ogg')) return 'ogg';
-  if (main.includes('aac')) return 'aac';
-  if (main.includes('mpeg')) return 'mp3';
-  if (main.includes('webm')) return 'webm';
-  return 'bin';
-}
-
 const RESOLVERS: Record<TemplateVar, (m: RecordingMetadata) => string> = {
   host: (m) => m.sourceHost,
   title: (m) => m.sourceTitle,
@@ -44,11 +35,15 @@ const RESOLVERS: Record<TemplateVar, (m: RecordingMetadata) => string> = {
 /**
  * Renders a filename from a template like "{host}_{date}_{time}" using the
  * recording's metadata. Each variable value is sanitized for filesystem
- * safety, the full basename is truncated to 200 chars, and an extension is
- * appended based on the MIME type. Returns "recording.<ext>" as a fallback
- * if substitution produces an empty string.
+ * safety, the full basename is truncated to 200 chars, and the given export
+ * extension is appended. Returns "recording.<ext>" as a fallback if
+ * substitution produces an empty string.
  */
-export function applyTemplate(template: string, meta: RecordingMetadata): string {
+export function applyTemplate(
+  template: string,
+  meta: RecordingMetadata,
+  extension: string,
+): string {
   // Fresh regex per call — avoids /g lastIndex statefulness pitfalls
   const pattern = /\{(host|title|date|time|timestamp)\}/g;
   const body = template.replace(pattern, (_, varName: string) => {
@@ -56,8 +51,7 @@ export function applyTemplate(template: string, meta: RecordingMetadata): string
     return sanitize(fn(meta));
   });
   const sanitized = sanitize(body).slice(0, MAX_BASENAME_LEN);
-  const ext = extFromMime(meta.mimeType);
-  return `${sanitized || 'recording'}.${ext}`;
+  return `${sanitized || 'recording'}.${extension}`;
 }
 
 export function validateTemplate(template: string): { ok: boolean; error?: string } {

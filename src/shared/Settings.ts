@@ -1,4 +1,4 @@
-import type { SortField, SortDirection } from '../types';
+import type { SortField, SortDirection, ExportFormat } from '../types';
 
 export interface Settings {
   // Recording
@@ -6,6 +6,7 @@ export interface Settings {
   maxDurationSec: number; // 0 = unlimited; caps memory use of long captures
 
   // Export
+  exportFormat: ExportFormat;
   exportSubfolder: string;
   autoExport: boolean;
   filenameTemplate: string;
@@ -24,6 +25,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   bitrate: 128_000,
   maxDurationSec: 0,
+  exportFormat: 'wav',
   exportSubfolder: 'TabRecordings',
   autoExport: false,
   filenameTemplate: '{host}_{date}_{time}',

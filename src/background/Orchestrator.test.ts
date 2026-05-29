@@ -25,9 +25,36 @@ interface BrowserStubs {
   download?: DownloadFn;
 }
 
+// The export pipeline decodes the blob through Web Audio before re-encoding.
+// Node has no AudioContext, so stand in a decoder that yields a short mono buffer.
+class FakeAudioContext {
+  sampleRate: number;
+  constructor(opts?: { sampleRate?: number }) {
+    this.sampleRate = opts?.sampleRate ?? 48000;
+  }
+  decodeAudioData(): Promise<{
+    numberOfChannels: number;
+    sampleRate: number;
+    length: number;
+    getChannelData: () => Float32Array;
+  }> {
+    const length = 4608;
+    return Promise.resolve({
+      numberOfChannels: 1,
+      sampleRate: this.sampleRate,
+      length,
+      getChannelData: () => new Float32Array(length),
+    });
+  }
+  close(): Promise<void> {
+    return Promise.resolve();
+  }
+}
+
 async function loadOrchestrator(stubs: BrowserStubs) {
   vi.resetModules();
   (globalThis as { indexedDB: unknown }).indexedDB = new IDBFactory();
+  (globalThis as { AudioContext: unknown }).AudioContext = FakeAudioContext;
   // Node lacks object-URL APIs that the export pipeline uses.
   (
     globalThis as { URL: { createObjectURL: unknown; revokeObjectURL: unknown } }
@@ -311,7 +338,23 @@ describe('Orchestrator.saveRecording', () => {
     await orch.saveRecording(7, captureResult());
     expect(downloads).toHaveLength(1);
     expect(downloads[0]?.filename).toMatch(/example\.com/);
+    // Default format is WAV: the captured WebM is converted on export.
+    expect(downloads[0]?.filename).toMatch(/\.wav$/);
     expect(downloads[0]?.conflictAction).toBe('uniquify');
+  });
+
+  it('honors the MP3 export format setting', async () => {
+    const downloads: { filename: string }[] = [];
+    const orch = await loadOrchestrator({
+      sendMessage: async () => undefined,
+      settings: { autoExport: true, exportFormat: 'mp3' },
+      download: async (opts) => {
+        downloads.push(opts);
+        return 1;
+      },
+    });
+    await orch.saveRecording(7, captureResult());
+    expect(downloads[0]?.filename).toMatch(/\.mp3$/);
   });
 
   it('does not export when autoExport is off', async () => {
