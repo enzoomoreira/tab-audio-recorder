@@ -80,6 +80,25 @@ Recordings are stored in IndexedDB (metadata + blob). Export decodes the blob,
 re-encodes it to the chosen format (`AudioEncoder`), and saves it through the
 `downloads` API with a user-defined filename template.
 
+For the full internals — the message bus, the three-strategy capture pipeline,
+the MV3 state machine, the export pipeline, and step-by-step change recipes — see
+the developer documentation in [`docs/`](docs/README.md).
+
+## Documentation
+
+Developer- and agent-facing docs live in [`docs/`](docs/README.md):
+
+- [docs/architecture.md](docs/architecture.md) — execution contexts, the typed
+  message bus, and the end-to-end recording flow.
+- [docs/capture.md](docs/capture.md) — the three capture strategies, media
+  detection, and frame routing.
+- [docs/storage-and-export.md](docs/storage-and-export.md) — IndexedDB
+  persistence and the transcode/filename/download export pipeline.
+- [docs/state-and-lifecycle.md](docs/state-and-lifecycle.md) — the per-tab state
+  machine, MV3 suspension survival, and cleanup.
+- [docs/development.md](docs/development.md) — build, test, the test bridge, and
+  change recipes for extending the codebase.
+
 ## Permissions
 
 Each permission is requested only for the functionality below:
