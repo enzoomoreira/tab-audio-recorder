@@ -71,18 +71,24 @@ export type BgToContentMessage =
   | { type: 'START_CAPTURE'; payload: { bitrate: number } }
   | { type: 'START_NETWORK_CAPTURE'; payload: { url: string } }
   | { type: 'START_WEBAUDIO_CAPTURE'; payload: { bitrate: number } }
-  | { type: 'STOP_CAPTURE' };
+  | { type: 'STOP_CAPTURE' }
+  // Arm the element hook to auto-capture the next media element that plays.
+  | { type: 'ARM_CAPTURE'; payload: { bitrate: number } }
+  | { type: 'DISARM_CAPTURE' }
+  // Discard an armed capture that already started in a losing frame (multi-frame race).
+  | { type: 'ABORT_CAPTURE' };
 
 // Content -> Background (proactive, not a reply)
 export type ContentToBgMessage =
   | { type: 'RECORDING_COMPLETE'; payload: CaptureResult }
-  | { type: 'RECORDING_ERROR'; payload: { reason: string } };
+  | { type: 'RECORDING_ERROR'; payload: { reason: string } }
+  // An armed frame auto-started capture when its media element played.
+  | { type: 'ARMED_STARTED' };
 
 // Popup -> Background (request/response)
 export type PopupToBgMessage =
   | { type: 'GET_TAB_STATE'; payload: { tabId: number } }
-  | { type: 'START_RECORDING'; payload: { tabId: number } }
-  | { type: 'STOP_RECORDING'; payload: { tabId: number } }
+  | { type: 'TOGGLE_RECORDING'; payload: { tabId: number } }
   | { type: 'OPEN_MANAGER' };
 
 // Manager -> Background (request/response)
@@ -93,7 +99,11 @@ export type ManagerToBgMessage =
   | { type: 'EXPORT_RECORDING'; payload: { id: string } };
 
 // Test bridge -> Background (E2E builds only; stripped from production)
-export type TestBridgeMessage = { type: 'TEST_START_RECORDING' } | { type: 'TEST_STOP_RECORDING' };
+export type TestBridgeMessage =
+  | { type: 'TEST_START_RECORDING' }
+  | { type: 'TEST_STOP_RECORDING' }
+  | { type: 'TEST_ARM_RECORDING' }
+  | { type: 'TEST_GET_LOGS' };
 
 // Everything the background's runtime.onMessage listener can receive.
 export type InboundMessage =
@@ -102,9 +112,12 @@ export type InboundMessage =
   | ContentToBgMessage
   | TestBridgeMessage;
 
-export type TabRecordingState = 'idle' | 'recording' | 'processing';
+export type TabRecordingState = 'idle' | 'armed' | 'recording' | 'processing';
 
-export type ActionResult = { ok: true } | { ok: false; error: string };
+// `armable` marks a start failure that happened only because nothing is playing
+// yet (no media element, stream URL, or AudioContext) -- the toggle then arms
+// instead of surfacing an error. DRM and comms failures are NOT armable.
+export type ActionResult = { ok: true } | { ok: false; error: string; armable?: boolean };
 
 // === Export ===
 // Recordings are captured as WebM/Opus; on export they are decoded and

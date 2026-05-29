@@ -39,7 +39,9 @@ Audio can live in any frame, so capture is addressed per `frameId`, not per tab:
   and sorts them **top frame (0) first**, so the top document is preferred when
   several frames have media.
 - `findFrameWithMedia` sends `CHECK_MEDIA` to each frame and returns the first
-  that answers `{ found: true }`. Frames without our content script (e.g.
+  that answers `{ playing: true }` — a media element *currently playing*. A
+  paused, previously-played element no longer qualifies, so the toggle arms (see
+  below) instead of capturing silence. Frames without our content script (e.g.
   `about:`, `chrome://`) simply throw and are skipped.
 - The chosen `frameId` is stored in `SessionState` (`activeFrame`) so `STOP_CAPTURE`
   later reaches the exact frame that is recording.
@@ -79,6 +81,13 @@ any page script runs. It is self-contained (no imports, no `browser.*`):
   closed shadow roots alike.
 - **Picks the capture target** on `START`: a currently-playing element (video
   preferred — it carries the audio we want), else the most recently played one.
+- **Arm + auto-start.** On `EL_ARM` the hook sets an armed flag; the very next
+  `play()` starts capture on *that* element synchronously, inside the patched
+  `play()`, with **no background round-trip** — so the recording catches the audio
+  from sample zero. It reports the outcome with a spontaneous `EL_ARM_FIRED`, which
+  the ISOLATED driver forwards to the background as `ARMED_STARTED`. `EL_DISARM`
+  cancels a pending arm; `EL_ABORT` discards a capture a losing frame started in a
+  multi-frame race.
 - **DRM/EME refusal.** If the chosen element has `mediaKeys`, capture would yield
   silence under Firefox's EME policy, so it is refused up front with a clear error
   instead of saving a silent file. (E2E: `13-drm-fake`.)
@@ -102,15 +111,22 @@ The ISOLATED half the orchestrator drives. Because the element lives in the MAIN
 world (and may be detached, so unreachable from here), detection and capture both
 happen in the hook; this class just speaks a small `window.postMessage` protocol:
 
-| ISOLATED -> MAIN (`tab-audio-recorder`) | MAIN -> ISOLATED (`tab-audio-recorder-page`)   |
-| --------------------------------------- | ---------------------------------------------- |
-| `EL_PROBE`                              | `EL_PROBE_RESULT { found }`                    |
-| `EL_START { bitrate }`                  | `EL_STARTED { ok, error? }`                    |
-| `EL_STOP`                               | `EL_STOPPED { ok, blob, mimeType, ... }`       |
-| (passive listen)                        | `EL_ERROR { error }` (spontaneous mid-capture) |
+| ISOLATED -> MAIN (`tab-audio-recorder`) | MAIN -> ISOLATED (`tab-audio-recorder-page`)    |
+| --------------------------------------- | ----------------------------------------------- |
+| `EL_PROBE`                              | `EL_PROBE_RESULT { found, playing }`            |
+| `EL_START { bitrate }`                  | `EL_STARTED { ok, error? }`                     |
+| `EL_STOP`                               | `EL_STOPPED { ok, blob, mimeType, ... }`        |
+| `EL_ARM { bitrate }`                    | `EL_ARM_FIRED { ok, error? }` (on the next play) |
+| `EL_DISARM` / `EL_ABORT`                | — (no reply)                                    |
+| (passive listen)                        | `EL_ERROR { error }` (spontaneous mid-capture)  |
 
 - `probe()` (1s timeout) answers the `CHECK_MEDIA` frame check: has the page
-  played any capturable element? If not, the strategy is skipped without error.
+  played any capturable element (`found`), and is one playing right now
+  (`playing`)? `findFrameWithMedia` gates Strategy 1 on `playing`. If nothing is
+  playing, the strategy is skipped without error.
+- `arm()` / `disarm()` / `abort()` send `EL_ARM` / `EL_DISARM` / `EL_ABORT`; a
+  passive listener turns the hook's spontaneous `EL_ARM_FIRED` into the recorder
+  becoming active (success) or an `onArmFailed` callback (e.g. DRM).
 - `start()` / `stop()` wait for the matching reply (10s timeout); the assembled
   `Blob` is structured-cloneable, so it crosses the postMessage boundary and then
   the runtime messaging boundary back to the background.
@@ -229,6 +245,7 @@ strategy:
 | `09-iframe-cross-origin.html` | Cross-origin frame reached via `all_frames` + routing     |
 | `13-drm-fake.html`            | DRM/EME refusal (faked `mediaKeys`)                       |
 | `14-detached-audio.html`      | Detached `new Audio()` (WhatsApp-style), never in DOM     |
+| `15-arm-then-play.html`       | Arm before playback, then auto-capture on the next `play()` |
 
 The **network strategy has no E2E fixture** — it is covered by
 `NetworkRecorder.test.ts` (unit) only. See

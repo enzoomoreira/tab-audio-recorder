@@ -1,6 +1,10 @@
 import {
   startRecording,
   stopRecording,
+  toggleRecording,
+  armRecording,
+  disarmRecording,
+  onArmedStarted,
   saveRecording,
   getTabState,
   clearTab,
@@ -9,14 +13,16 @@ import {
   exportRecordingById,
   repository,
 } from './Orchestrator';
-import { createLogger, setVerbose } from '../shared/Logger';
+import { createLogger, setVerbose, getLogBuffer } from '../shared/Logger';
 import { getSettings, onSettingsChanged } from '../shared/Settings';
 import type { InboundMessage } from '../types';
 
 const logger = createLogger('Background');
 
 // --- Boot: rehydrate state (survives MV3 suspension), load settings ---
-void (async () => {
+// Exposed as a promise so event handlers that fire on a fresh wake (e.g. the
+// hotkey) can await hydration before reading per-tab state.
+const ready = (async () => {
   await hydrate();
   const settings = await getSettings();
   setVerbose(settings.verboseLogging);
@@ -37,11 +43,8 @@ browser.runtime.onMessage.addListener(
       case 'GET_TAB_STATE':
         return Promise.resolve({ state: getTabState(message.payload.tabId) });
 
-      case 'START_RECORDING':
-        return startRecording(message.payload.tabId);
-
-      case 'STOP_RECORDING':
-        return stopRecording(message.payload.tabId);
+      case 'TOGGLE_RECORDING':
+        return toggleRecording(message.payload.tabId);
 
       case 'OPEN_MANAGER':
         void browser.tabs.create({ url: browser.runtime.getURL('manager/index.html') });
@@ -62,7 +65,17 @@ browser.runtime.onMessage.addListener(
       case 'RECORDING_ERROR': {
         const tabId = sender.tab?.id;
         logger.error('Recording error on tab', tabId, message.payload.reason);
-        if (tabId != null) clearTab(tabId);
+        if (tabId != null) {
+          // An armed auto-start that failed (e.g. DRM): disarm every frame.
+          if (getTabState(tabId) === 'armed') void disarmRecording(tabId);
+          else clearTab(tabId);
+        }
+        return undefined;
+      }
+
+      case 'ARMED_STARTED': {
+        const tabId = sender.tab?.id;
+        if (tabId != null) void onArmedStarted(tabId, sender.frameId ?? 0);
         return undefined;
       }
 
@@ -94,6 +107,19 @@ browser.runtime.onMessage.addListener(
         return tabId != null
           ? stopRecording(tabId)
           : Promise.resolve({ ok: false, error: 'no tab' });
+      }
+
+      case 'TEST_ARM_RECORDING': {
+        if (!__TEST_BRIDGE__) return undefined;
+        const tabId = sender.tab?.id;
+        return tabId != null
+          ? armRecording(tabId)
+          : Promise.resolve({ ok: false, error: 'no tab' });
+      }
+
+      case 'TEST_GET_LOGS': {
+        if (!__TEST_BRIDGE__) return undefined;
+        return Promise.resolve({ logs: getLogBuffer() });
       }
 
       default:
@@ -130,8 +156,13 @@ browser.webRequest.onHeadersReceived.addListener(
 );
 
 // --- Hotkey: record-toggle ---
+// Same logic as the popup button: stop / disarm / start-now / arm, decided from
+// the tab state. Works with the popup closed (the listener lives here in the
+// background). `await ready` guards against the listener firing on a fresh MV3
+// wake before state has been rehydrated.
 browser.commands.onCommand.addListener(async (command) => {
   if (command !== 'record-toggle') return;
+  await ready;
 
   const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) {
@@ -139,14 +170,6 @@ browser.commands.onCommand.addListener(async (command) => {
     return;
   }
 
-  const state = getTabState(tab.id);
-  if (state === 'idle') {
-    const result = await startRecording(tab.id);
-    if (!result.ok) logger.warn('record-toggle start failed:', result.error);
-  } else if (state === 'recording') {
-    const result = await stopRecording(tab.id);
-    if (!result.ok) logger.warn('record-toggle stop failed:', result.error);
-  } else {
-    logger.debug('record-toggle ignored, tab is processing');
-  }
+  const result = await toggleRecording(tab.id);
+  if (!result.ok) logger.warn('record-toggle failed:', result.error);
 });

@@ -37,9 +37,14 @@ function waitForReply<T>(type: string, timeoutMs = 10_000): Promise<T> {
 export class MediaElementRecorder implements IRecorder {
   private recording = false;
   private errorListener: ((event: MessageEvent) => void) | null = null;
+  private armListener: ((event: MessageEvent) => void) | null = null;
 
   // Invoked if the page-world recorder errors spontaneously mid-capture.
   onError: ((reason: string) => void) | null = null;
+  // Invoked when an armed capture auto-starts (the played element triggered it)
+  // or when that auto-start failed (e.g. DRM content).
+  onArmFired: (() => void) | null = null;
+  onArmFailed: ((reason: string) => void) | null = null;
 
   private installErrorListener(): void {
     const handler = (event: MessageEvent): void => {
@@ -61,15 +66,68 @@ export class MediaElementRecorder implements IRecorder {
     }
   }
 
-  /** Whether the page has played any media element we could capture. */
-  async probe(): Promise<boolean> {
+  // Listens for the spontaneous EL_ARM_FIRED the hook sends when an armed
+  // element plays. On success the recorder transitions to recording (and an
+  // error listener is installed, mirroring start()); on failure it reports back.
+  private installArmListener(): void {
+    const handler = (event: MessageEvent): void => {
+      if (event.source !== window) return;
+      const data = event.data as
+        | { source?: string; type?: string; ok?: boolean; error?: string }
+        | null;
+      if (!data || data.source !== TAG_PAGE || data.type !== 'EL_ARM_FIRED') return;
+      this.removeArmListener();
+      if (data.ok) {
+        this.recording = true;
+        this.installErrorListener();
+        this.onArmFired?.();
+      } else {
+        this.onArmFailed?.(data.error ?? 'Armed capture failed');
+      }
+    };
+    this.armListener = handler;
+    window.addEventListener('message', handler);
+  }
+
+  private removeArmListener(): void {
+    if (this.armListener) {
+      window.removeEventListener('message', this.armListener);
+      this.armListener = null;
+    }
+  }
+
+  /** What the page has played: any capturable element, and whether one is playing now. */
+  async probe(): Promise<{ found: boolean; playing: boolean }> {
     postToPage({ type: 'EL_PROBE' });
     try {
-      const reply = await waitForReply<{ found: boolean }>('EL_PROBE_RESULT', 1000);
-      return reply.found;
+      const reply = await waitForReply<{ found: boolean; playing: boolean }>('EL_PROBE_RESULT', 1000);
+      return { found: reply.found, playing: reply.playing };
     } catch {
-      return false;
+      return { found: false, playing: false };
     }
+  }
+
+  /** Arm the hook to auto-capture the next media element that plays. */
+  arm(bitrate: number): void {
+    this.installArmListener();
+    postToPage({ type: 'EL_ARM', bitrate });
+    logger.info('Media element capture armed, bitrate:', bitrate);
+  }
+
+  /** Cancel a pending arm (no element has played yet). */
+  disarm(): void {
+    this.removeArmListener();
+    postToPage({ type: 'EL_DISARM' });
+    logger.info('Media element capture disarmed');
+  }
+
+  /** Discard an in-flight capture without producing a recording (multi-frame race). */
+  abort(): void {
+    this.recording = false;
+    this.removeArmListener();
+    this.removeErrorListener();
+    postToPage({ type: 'EL_ABORT' });
+    logger.info('Media element capture aborted');
   }
 
   async start(bitrate: number): Promise<void> {

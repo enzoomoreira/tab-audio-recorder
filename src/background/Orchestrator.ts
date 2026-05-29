@@ -38,6 +38,27 @@ export function getTabState(tabId: number): TabRecordingState {
   return session.state(tabId);
 }
 
+// Reflects the tab's recording state on the toolbar icon, so the armed/recording
+// state is visible even when the popup is closed. `browser.action` is optional
+// here so unit tests (which mock a minimal `browser`) don't need to stub it.
+function updateBadge(tabId: number, state: TabRecordingState): void {
+  const action = browser.action;
+  if (!action?.setBadgeText) return;
+  let text = '';
+  let color = '#d98000';
+  if (state === 'armed') {
+    text = '●'; // filled circle
+    color = '#d98000'; // amber
+  } else if (state === 'recording') {
+    text = 'REC';
+    color = '#cc0000'; // red
+  }
+  void action.setBadgeText({ text, tabId }).catch(() => undefined);
+  if (text && action.setBadgeBackgroundColor) {
+    void action.setBadgeBackgroundColor({ color, tabId }).catch(() => undefined);
+  }
+}
+
 /** Restore state after a background wake and re-arm watchdogs for stuck tabs. */
 export async function hydrate(): Promise<void> {
   await session.hydrate();
@@ -51,6 +72,7 @@ export function clearTab(tabId: number): void {
   session.clear(tabId);
   clearProcessingWatchdog(tabId);
   clearMaxDuration(tabId);
+  updateBadge(tabId, 'idle');
 }
 
 function armMaxDuration(tabId: number, seconds: number): void {
@@ -109,16 +131,17 @@ async function listFrameIds(tabId: number): Promise<number[]> {
   }
 }
 
+// Returns the first frame with a media element that is *currently playing*.
+// Gating on `playing` (not merely "ever played") means a paused element left
+// over from earlier playback no longer makes Strategy 1 capture silence -- the
+// toggle falls through and arms instead.
 async function findFrameWithMedia(tabId: number): Promise<number | null> {
   const frameIds = await listFrameIds(tabId);
   for (const frameId of frameIds) {
     try {
-      const reply: { found: boolean } | undefined = await browser.tabs.sendMessage(
-        tabId,
-        { type: 'CHECK_MEDIA' },
-        { frameId },
-      );
-      if (reply?.found) return frameId;
+      const reply: { found: boolean; playing: boolean } | undefined =
+        await browser.tabs.sendMessage(tabId, { type: 'CHECK_MEDIA' }, { frameId });
+      if (reply?.playing) return frameId;
     } catch {
       // Frame may not have our content script (chrome://, about:, etc.).
     }
@@ -138,6 +161,7 @@ function findFrameWithStreamURL(tabId: number): { frameId: number; url: string }
 function markRecording(tabId: number, frameId: number, maxDurationSec: number): void {
   session.setActiveFrame(tabId, frameId);
   session.setState(tabId, 'recording');
+  updateBadge(tabId, 'recording');
   if (maxDurationSec > 0) armMaxDuration(tabId, maxDurationSec);
 }
 
@@ -226,12 +250,18 @@ export async function startRecording(tabId: number): Promise<ActionResult> {
     }
   }
 
+  // A real stream-capture failure (a source existed but failed) is surfaced as-is
+  // and is NOT armable. Only a clean "nothing is playing" outcome is armable, so
+  // the toggle can arm and wait for the next playback.
+  if (strategy2Error) {
+    return { ok: false, error: strategy2Error };
+  }
   return {
     ok: false,
+    armable: true,
     error:
-      strategy2Error ??
       'No audio source detected (no media element, no stream URL, no AudioContext). ' +
-        'Make sure audio is playing before clicking Record.',
+      'Make sure audio is playing before clicking Record.',
   };
 }
 
@@ -261,6 +291,99 @@ export async function stopRecording(tabId: number): Promise<ActionResult> {
   // RECORDING_COMPLETE. Guard against that message never landing.
   armProcessingWatchdog(tabId);
   return { ok: true };
+}
+
+async function broadcastDisarm(tabId: number): Promise<void> {
+  const frameIds = await listFrameIds(tabId);
+  for (const frameId of frameIds) {
+    await browser.tabs
+      .sendMessage(tabId, { type: 'DISARM_CAPTURE' }, { frameId })
+      .catch(() => undefined);
+  }
+}
+
+/**
+ * Arms the tab: every frame's element hook is told to auto-capture the next
+ * media element that plays. Capture itself starts in the page (zero round-trip),
+ * and the winning frame reports back via `onArmedStarted`.
+ */
+export async function armRecording(tabId: number): Promise<ActionResult> {
+  const state = session.state(tabId);
+  if (state === 'recording') return { ok: false, error: 'Already recording this tab' };
+  if (state === 'armed') return { ok: true };
+  if (state === 'processing') return { ok: false, error: 'Tab is busy finishing a recording' };
+
+  const settings = await getSettings();
+  const frameIds = await listFrameIds(tabId);
+  let delivered = 0;
+  for (const frameId of frameIds) {
+    const reply: { ok?: boolean } | undefined = await browser.tabs
+      .sendMessage(tabId, { type: 'ARM_CAPTURE', payload: { bitrate: settings.bitrate } }, { frameId })
+      .catch(() => undefined);
+    if (reply?.ok) delivered++;
+  }
+
+  if (delivered === 0) {
+    return { ok: false, error: 'Cannot arm: no capturable frame on this page (try reloading the tab)' };
+  }
+
+  session.setState(tabId, 'armed');
+  updateBadge(tabId, 'armed');
+  logger.info('Armed tab', tabId, 'across', delivered, 'frame(s)');
+  return { ok: true };
+}
+
+/** Cancels a pending arm and returns the tab to idle. */
+export async function disarmRecording(tabId: number): Promise<ActionResult> {
+  if (session.state(tabId) !== 'armed') return { ok: false, error: 'Not armed' };
+  await broadcastDisarm(tabId);
+  clearTab(tabId);
+  logger.info('Disarmed tab', tabId);
+  return { ok: true };
+}
+
+/**
+ * Single entry point shared by the popup button and the hotkey:
+ * recording -> stop, armed -> disarm, idle -> start now if audio is playing,
+ * otherwise arm and wait for the next playback.
+ */
+export async function toggleRecording(tabId: number): Promise<ActionResult> {
+  const state = session.state(tabId);
+  if (state === 'recording') return stopRecording(tabId);
+  if (state === 'armed') return disarmRecording(tabId);
+  if (state === 'processing') return { ok: false, error: 'Tab is busy finishing a recording' };
+
+  const result = await startRecording(tabId);
+  if (result.ok) return result;
+  if (result.armable) return armRecording(tabId);
+  return result;
+}
+
+/**
+ * A frame's element hook auto-started capture after the tab was armed. Promote
+ * the tab to 'recording' and disarm the other frames so a second concurrent
+ * play() can't start a duplicate. If the tab is no longer armed (another frame
+ * already won, or it was disarmed), tell this frame to discard its capture.
+ */
+export async function onArmedStarted(tabId: number, frameId: number): Promise<void> {
+  if (session.state(tabId) !== 'armed') {
+    await browser.tabs
+      .sendMessage(tabId, { type: 'ABORT_CAPTURE' }, { frameId })
+      .catch(() => undefined);
+    return;
+  }
+
+  const settings = await getSettings();
+  markRecording(tabId, frameId, settings.maxDurationSec);
+  logger.info('Armed capture started on tab', tabId, 'frame', frameId);
+
+  const frameIds = await listFrameIds(tabId);
+  for (const other of frameIds) {
+    if (other === frameId) continue;
+    await browser.tabs
+      .sendMessage(tabId, { type: 'DISARM_CAPTURE' }, { frameId: other })
+      .catch(() => undefined);
+  }
 }
 
 export async function saveRecording(tabId: number, result: CaptureResult): Promise<void> {

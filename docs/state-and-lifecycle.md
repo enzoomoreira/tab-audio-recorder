@@ -22,33 +22,41 @@ Two things make this safe:
 
 ## Per-tab state machine
 
-A tab is in exactly one of three states (`TabRecordingState` in
+A tab is in exactly one of four states (`TabRecordingState` in
 `src/types/index.ts`):
 
 ```
-        START_RECORDING (a strategy succeeds)
- idle ------------------------------------------> recording
-   ^                                                  |
-   |                                                  | STOP_RECORDING
-   |                                                  | (STOP_CAPTURE acked)
-   |                                                  v
-   |               RECORDING_COMPLETE saved       processing
-   '----------------------------------------------/   |
-   |   (or save failure -> still clears)              |
-   |                                                  |
-   '--- processing watchdog (30s) / RECORDING_ERROR --'
-   '--- tab closed / top-frame navigation -----------> idle (clearTab)
+        toggle: audio already playing (a strategy succeeds)
+ idle ------------------------------------------------> recording
+   | ^                                                      |
+   | |  toggle: nothing playing yet                         | STOP (STOP_CAPTURE acked)
+   | |  (ARM_CAPTURE broadcast to all frames)               | or max-duration timer
+   | v                                                      v
+   | armed --- play() fires -> ARMED_STARTED ----------> processing
+   |   |       (capture started in the page)                |
+   |   '--- toggle again -> disarm -> idle                  | RECORDING_COMPLETE saved
+   |                                                        | (or save failure)
+   '<-------------------------------------------------------'
+   '<-- processing watchdog (30s) / RECORDING_ERROR
+   '<-- tab closed / top-frame navigation (clearTab)
 ```
 
 - **idle** — nothing happening; the popup shows "Ready".
+- **armed** — every frame's element hook is primed to auto-capture the next media
+  element that plays; capture has not started yet. The popup shows "Armed —
+  waiting for audio" and a toolbar badge marks it. The next `play()` starts capture
+  in the page, and the winning frame reports `ARMED_STARTED`, moving the tab to
+  `recording`. Only the media-element strategy is armable.
 - **recording** — a recorder is active in `activeFrame(tabId)`. The popup shows
   "Recording".
 - **processing** — `STOP_CAPTURE` was acknowledged and the blob is being
   assembled; we are waiting for `RECORDING_COMPLETE`. The popup shows "Saving"
   and disables the button.
 
-The popup mirrors this optimistically (applies the next state immediately, rolls
-back if the background returns `{ ok: false }`) — see `src/popup/index.ts`.
+The popup's single button sends one `TOGGLE_RECORDING`; on success it re-reads the
+resulting state (it cannot predict whether `idle` becomes `recording` or `armed`),
+and on `{ ok: false }` it restores the previous state and shows the error — see
+`src/popup/index.ts`.
 
 ## SessionState (`src/shared/SessionState.ts`)
 
@@ -111,11 +119,11 @@ The invariant "a tab is always released" is enforced from several directions:
 
 ## Hotkey path
 
-`browser.commands.onCommand` handles `record-toggle` (`Alt+Shift+R`): it reads the
-active tab's state and calls `startRecording` when `idle`, `stopRecording` when
-`recording`, and ignores the keypress while `processing`. This is a thin wrapper
-over the same orchestrator functions the popup uses — there is no separate code
-path for the hotkey.
+`browser.commands.onCommand` handles `record-toggle` (`Alt+Shift+R`): after
+`await ready` (so a fresh MV3 wake has rehydrated state before it is read) it calls
+`toggleRecording` on the active tab — the exact same entry point as the popup
+button, so the hotkey records, arms, disarms, or stops by state with no separate
+code path. The listener lives in the background, so it works with the popup closed.
 
 ## Settings propagation
 

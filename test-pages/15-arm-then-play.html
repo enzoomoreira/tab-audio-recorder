@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>15 - arm then play</title>
+    <script src="lib/audio.js"></script>
+  </head>
+  <body>
+    <h1>15 - arm, then play</h1>
+    <p>Expected strategy: <strong>DOM</strong> (armed auto-start)</p>
+    <audio id="player" controls></audio>
+    <button data-testid="start">Start audio</button>
+    <script>
+      window.__expected = { strategy: 'DOM', technique: 'arm-then-play' };
+      const player = document.getElementById('player');
+      player.src = window.sineWavUrl(10, 440);
+      player.loop = true;
+      window.__startAudio = () => player.play();
+      window.__stopAudio = () => player.pause();
+      document
+        .querySelector('[data-testid="start"]')
+        .addEventListener('click', () => window.__startAudio());
+
+      window.addEventListener('message', (event) => {
+        if (event.data === 'START') window.__startAudio();
+        if (event.data === 'STOP') window.__stopAudio();
+      });
+    </script>
+  </body>
+</html>

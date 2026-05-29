@@ -25,7 +25,13 @@ synthesize sound through the Web Audio API.
 - **Settings**: bitrate, max recording length (memory guard), export format,
   export subfolder, filename template, auto-export, storage cap with
   auto-cleanup, verbose logging.
-- **Hotkey**: `Alt+Shift+R` toggles recording on the active tab.
+- **Arm to record from the start**: the single Record button (and the
+  `Alt+Shift+R` hotkey) records immediately when audio is already playing, or
+  **arms** the tab and auto-starts the instant the next audio plays — so short
+  clips are captured from the very first sample. A toolbar badge shows the
+  armed/recording state while the popup is closed.
+- **Hotkey**: `Alt+Shift+R` records, arms, or stops the active tab (same logic
+  as the popup button; works with the popup closed).
 - **DRM-aware**: EME/DRM-protected playback is detected and refused up front
   instead of saving silence.
 

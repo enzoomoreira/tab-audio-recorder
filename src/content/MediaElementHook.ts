@@ -30,14 +30,20 @@
   }
 
   // Patch play() before any page script runs (document_start guarantees this),
-  // so we observe the very first playback of every element.
+  // so we observe the very first playback of every element. When armed, this is
+  // also the trigger point: capture starts synchronously here, with no round-trip
+  // to the background, so the recording catches the audio from sample zero.
   type PlayFn = (this: HTMLMediaElement) => Promise<void>;
   const OrigPlay = HTMLMediaElement.prototype.play as PlayFn;
   const wrappedPlay: PlayFn = function (this: HTMLMediaElement) {
     try {
       remember(this);
+      if (armed) {
+        armed = false;
+        void handleArmedStart(this, armBitrate);
+      }
     } catch {
-      // Tracking must never break the page's own playback.
+      // Tracking and arming must never break the page's own playback.
     }
     return OrigPlay.call(this);
   };
@@ -115,30 +121,25 @@
   let chunks: Blob[] = [];
   let startedAt = 0;
   let mimeType = '';
+  // Arm state: when set, the next play() auto-captures that element.
+  let armed = false;
+  let armBitrate = 128_000;
 
   function reply(payload: Record<string, unknown>): void {
     window.postMessage({ source: TAG_PAGE, ...payload }, window.location.origin);
   }
 
-  async function handleStart(bitrate: number): Promise<void> {
-    if (activeRecorder) {
-      reply({ type: 'EL_STARTED', ok: false, error: 'Already recording' });
-      return;
-    }
-    const el = pickElement();
-    if (!el) {
-      reply({ type: 'EL_STARTED', ok: false, error: 'No media element found on this page' });
-      return;
-    }
+  // Sets up and starts a MediaRecorder over `el`'s captured audio. Shared by the
+  // explicit start path (handleStart) and the armed auto-start path
+  // (handleArmedStart). Returns the outcome; the caller sends the matching reply.
+  async function beginCapture(
+    el: HTMLMediaElement,
+    bitrate: number,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
     // EME/DRM-protected playback yields a silent capture stream in Firefox.
     // Surface this up-front instead of recording silence.
     if ((el as unknown as { mediaKeys?: unknown }).mediaKeys != null) {
-      reply({
-        type: 'EL_STARTED',
-        ok: false,
-        error: 'DRM/EME content cannot be captured (Firefox security policy)',
-      });
-      return;
+      return { ok: false, error: 'DRM/EME content cannot be captured (Firefox security policy)' };
     }
     try {
       const stream = captureFrom(el);
@@ -149,8 +150,7 @@
       // under an audio-only mimeType -- record an audio-only stream.
       const audioTracks = stream.getAudioTracks();
       if (audioTracks.length === 0) {
-        reply({ type: 'EL_STARTED', ok: false, error: 'Media element has no audio tracks' });
-        return;
+        return { ok: false, error: 'Media element has no audio tracks' };
       }
       const audioOnly = new MediaStream(audioTracks);
       mimeType = pickMimeType();
@@ -172,14 +172,53 @@
       };
       startedAt = Date.now();
       activeRecorder.start(1000);
-      reply({ type: 'EL_STARTED', ok: true });
+      return { ok: true };
     } catch (err) {
       activeRecorder = null;
-      reply({
-        type: 'EL_STARTED',
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-      });
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  async function handleStart(bitrate: number): Promise<void> {
+    if (activeRecorder) {
+      reply({ type: 'EL_STARTED', ok: false, error: 'Already recording' });
+      return;
+    }
+    const el = pickElement();
+    if (!el) {
+      reply({ type: 'EL_STARTED', ok: false, error: 'No media element found on this page' });
+      return;
+    }
+    reply({ type: 'EL_STARTED', ...(await beginCapture(el, bitrate)) });
+  }
+
+  // Auto-start triggered from the patched play() while armed. Captures the exact
+  // element that the user played (no pickElement heuristic needed). The reply is
+  // spontaneous (not awaited by the ISOLATED driver), so it routes through the
+  // EL_ARM_FIRED passive listener there.
+  async function handleArmedStart(el: HTMLMediaElement, bitrate: number): Promise<void> {
+    if (activeRecorder) {
+      reply({ type: 'EL_ARM_FIRED', ok: false, error: 'Already recording' });
+      return;
+    }
+    reply({ type: 'EL_ARM_FIRED', ...(await beginCapture(el, bitrate)) });
+  }
+
+  // Stop and discard an in-flight capture without producing a blob. Used when a
+  // multi-frame arm race causes a losing frame to start a recording the
+  // background has already superseded.
+  function handleAbort(): void {
+    if (!activeRecorder) return;
+    const rec = activeRecorder;
+    activeRecorder = null;
+    chunks = [];
+    rec.ondataavailable = null;
+    rec.onerror = null;
+    rec.onstop = null;
+    try {
+      rec.stop();
+    } catch {
+      // Already stopped; nothing to discard.
     }
   }
 
@@ -223,11 +262,18 @@
     if (!data || data.source !== TAG) return;
 
     if (data.type === 'EL_PROBE') {
-      reply({ type: 'EL_PROBE_RESULT', found: tracked.length > 0 });
+      reply({ type: 'EL_PROBE_RESULT', found: tracked.length > 0, playing: tracked.some(isPlaying) });
     } else if (data.type === 'EL_START') {
       void handleStart(data.bitrate ?? 128_000);
     } else if (data.type === 'EL_STOP') {
       handleStop();
+    } else if (data.type === 'EL_ARM') {
+      armed = true;
+      armBitrate = data.bitrate ?? 128_000;
+    } else if (data.type === 'EL_DISARM') {
+      armed = false;
+    } else if (data.type === 'EL_ABORT') {
+      handleAbort();
     }
   });
 })();

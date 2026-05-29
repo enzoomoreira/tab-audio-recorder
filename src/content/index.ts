@@ -14,6 +14,10 @@ if (WIN.__tabAudioRecorderLoaded) {
   WIN.__tabAudioRecorderLoaded = true;
 
   let activeRecorder: IRecorder | null = null;
+  // A media-element recorder waiting for the next play() to auto-start. Distinct
+  // from activeRecorder: it is not yet recording, only armed. Promoted to
+  // activeRecorder once it fires.
+  let armedRecorder: MediaElementRecorder | null = null;
 
   // Wire a recorder's spontaneous-error callback so a mid-capture failure
   // (not triggered by stop) clears local state and notifies the background.
@@ -28,7 +32,9 @@ if (WIN.__tabAudioRecorderLoaded) {
   browser.runtime.onMessage.addListener(
     (message: BgToContentMessage): Promise<unknown> | undefined => {
       if (message.type === 'CHECK_MEDIA') {
-        return new MediaElementRecorder().probe().then((found) => ({ found }));
+        return new MediaElementRecorder()
+          .probe()
+          .then((r) => ({ found: r.found, playing: r.playing }));
       }
 
       if (message.type === 'START_CAPTURE') {
@@ -45,6 +51,26 @@ if (WIN.__tabAudioRecorderLoaded) {
 
       if (message.type === 'STOP_CAPTURE') {
         return handleStop();
+      }
+
+      if (message.type === 'ARM_CAPTURE') {
+        return Promise.resolve(handleArm(message.payload.bitrate));
+      }
+
+      if (message.type === 'DISARM_CAPTURE') {
+        armedRecorder?.disarm();
+        armedRecorder = null;
+        return Promise.resolve({ ok: true });
+      }
+
+      if (message.type === 'ABORT_CAPTURE') {
+        if (activeRecorder instanceof MediaElementRecorder) {
+          activeRecorder.abort();
+          activeRecorder = null;
+        }
+        armedRecorder?.disarm();
+        armedRecorder = null;
+        return Promise.resolve({ ok: true });
       }
 
       return undefined;
@@ -66,6 +92,31 @@ if (WIN.__tabAudioRecorderLoaded) {
       logger.error('DOM capture start failed:', error);
       return { ok: false, error };
     }
+  }
+
+  // Arms a media-element recorder. Capture does not start now -- the MAIN-world
+  // hook starts it synchronously on the next play() and signals back via
+  // onArmFired, at which point the recorder becomes the active one and the
+  // background is told to flip the tab to 'recording'.
+  function handleArm(bitrate: number): ActionResult {
+    if (activeRecorder?.isRecording()) {
+      return { ok: false, error: 'Already recording' };
+    }
+    armedRecorder?.disarm();
+    const rec = new MediaElementRecorder();
+    rec.onArmFired = () => {
+      activeRecorder = rec;
+      armedRecorder = null;
+      wireErrors(rec);
+      void browser.runtime.sendMessage({ type: 'ARMED_STARTED' });
+    };
+    rec.onArmFailed = (reason) => {
+      armedRecorder = null;
+      void browser.runtime.sendMessage({ type: 'RECORDING_ERROR', payload: { reason } });
+    };
+    armedRecorder = rec;
+    rec.arm(bitrate);
+    return { ok: true };
   }
 
   async function handleStartNetwork(url: string): Promise<ActionResult> {
@@ -137,6 +188,8 @@ if (WIN.__tabAudioRecorderLoaded) {
         void browser.runtime.sendMessage({ type: 'TEST_START_RECORDING' });
       } else if (detail === 'STOP') {
         void browser.runtime.sendMessage({ type: 'TEST_STOP_RECORDING' });
+      } else if (detail === 'ARM') {
+        void browser.runtime.sendMessage({ type: 'TEST_ARM_RECORDING' });
       }
     });
     logger.info('Test bridge enabled on', location.origin);

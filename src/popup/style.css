@@ -80,6 +80,20 @@ body {
   display: block;
 }
 
+/* Armed state: waiting for playback -- amber ring + pulsing dot */
+.record-btn.is-armed {
+  border-color: #d98000;
+}
+
+.record-btn.is-armed:hover:not(:disabled) {
+  background: rgba(217, 128, 0, 0.12);
+}
+
+.record-btn.is-armed .record-dot {
+  background: #d98000;
+  animation: rec-pulse 1.4s ease-in-out infinite;
+}
+
 /* Recording state: square dot + pulse */
 .record-btn.is-recording .record-dot {
   border-radius: 5px;

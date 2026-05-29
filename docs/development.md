@@ -41,11 +41,16 @@ To load manually instead of `web-ext`: open `about:debugging#/runtime/this-firef
 
 - `bun run test:e2e` sets `VITE_TEST_BRIDGE=true`, so the flag is `true`.
 - `bun run build` does **not** set it, so it is `false` and the minifier strips
-  every `if (__TEST_BRIDGE__) { ... }` block as dead code.
+  every `if (__TEST_BRIDGE__) { ... }` block as dead code — including the
+  diagnostic log buffer in `Logger.ts`.
+- `vitest.config.ts` (unit) also `define`s it as `false`, so shared modules that
+  read the flag (e.g. `Logger`) run under happy-dom without a `ReferenceError`.
 
 This matters for security. The bridge (`src/content/index.ts`,
 `src/background/index.ts`) lets a page on `localhost`/`127.0.0.1` trigger
-record/stop by dispatching a `tab-audio-recorder-cmd` custom event. It must never
+record/arm/stop by dispatching a `tab-audio-recorder-cmd` custom event
+(`START` / `STOP` / `ARM`), and exposes `TEST_GET_LOGS` to read the background's
+diagnostic log buffer. It must never
 ship in production, or any localhost page could start a silent capture. The
 double guard — build-time strip **and** a runtime hostname check — means
 production has no bridge code at all.
@@ -95,8 +100,12 @@ bun run test:e2e     # builds with the bridge, then runs the Selenium suite
 - `test/e2e/server.ts` serves `test-pages/` over two random ports (a second port
   exists so an iframe can be genuinely cross-origin).
 - `test/e2e/helpers.ts` drives recordings through the test bridge
-  (`startRecording`/`stopRecording` dispatch the custom event) and asserts results
-  by reading IndexedDB through the manager's runtime messaging.
+  (`startRecording`/`stopRecording`/`armRecording` dispatch the custom event;
+  `stopRecording` then waits a short settle window so the save lands before any
+  navigation tears the recorder down) and asserts results by reading IndexedDB
+  through the manager's runtime messaging. On a failed test, `dumpDiagnostics`
+  saves a screenshot to `e2e-artifacts/` and prints the background log buffer
+  (via `TEST_GET_LOGS`) so a red test shows *why*, not just "got null".
 
 The `test-pages/` fixtures map one-to-one onto capture paths — see the
 [strategy/test-page map](capture.md#strategy-and-e2e-test-page-map).

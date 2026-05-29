@@ -36,6 +36,10 @@ export async function launchDriver(baseUrl: string, altUrl: string): Promise<E2E
   options.setPreference('media.autoplay.blocking_policy', 0);
   options.setPreference('media.autoplay.allow-extension-background-pages', true);
   options.setPreference('media.block-autoplay-until-in-foreground', false);
+  // Mirror page/content-script console.* to Firefox stdout, so it shows up in the
+  // geckodriver output captured by the test runner (complements the background
+  // log buffer, which only covers the background context).
+  options.setPreference('devtools.console.stdout.content', true);
 
   const service = new ServiceBuilder(geckoDriverPath);
 

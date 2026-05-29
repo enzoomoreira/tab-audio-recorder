@@ -10,7 +10,7 @@ type SendMessage = (
   tabId: number,
   message: { type: string; payload?: Record<string, unknown> },
   options?: { frameId?: number },
-) => Promise<{ ok?: boolean; found?: boolean; error?: string } | undefined>;
+) => Promise<{ ok?: boolean; found?: boolean; playing?: boolean; error?: string } | undefined>;
 
 type DownloadFn = (opts: {
   url: string;
@@ -110,7 +110,7 @@ describe('Orchestrator.startRecording', () => {
     const orch = await loadOrchestrator({
       sendMessage: async (_t, msg, opts) => {
         calls.push({ type: msg.type, frameId: opts?.frameId });
-        if (msg.type === 'CHECK_MEDIA') return { found: true };
+        if (msg.type === 'CHECK_MEDIA') return { found: true, playing: true };
         if (msg.type === 'START_CAPTURE') return { ok: true };
         return undefined;
       },
@@ -164,7 +164,7 @@ describe('Orchestrator.startRecording', () => {
   it('strategy 1 error from content script is propagated', async () => {
     const orch = await loadOrchestrator({
       sendMessage: async (_t, msg) => {
-        if (msg.type === 'CHECK_MEDIA') return { found: true };
+        if (msg.type === 'CHECK_MEDIA') return { found: true, playing: true };
         if (msg.type === 'START_CAPTURE')
           return {
             ok: false,
@@ -196,7 +196,7 @@ describe('Orchestrator.startRecording', () => {
   it('rejects double-start on same tab', async () => {
     const orch = await loadOrchestrator({
       sendMessage: async (_t, msg) => {
-        if (msg.type === 'CHECK_MEDIA') return { found: true };
+        if (msg.type === 'CHECK_MEDIA') return { found: true, playing: true };
         if (msg.type === 'START_CAPTURE') return { ok: true };
         return undefined;
       },
@@ -221,7 +221,7 @@ describe('Orchestrator: frame routing', () => {
       sendMessage: async (_t, msg, opts) => {
         if (msg.type === 'CHECK_MEDIA') {
           checkedFrames.push(opts?.frameId ?? -1);
-          return { found: opts?.frameId === 12 };
+          return { found: opts?.frameId === 12, playing: opts?.frameId === 12 };
         }
         if (msg.type === 'START_CAPTURE') {
           startedFrame.id = opts?.frameId;
@@ -266,7 +266,7 @@ describe('Orchestrator.stopRecording', () => {
     const orch = await loadOrchestrator({
       getAllFrames: async () => [{ frameId: 0 }, { frameId: 9 }],
       sendMessage: async (_t, msg, opts) => {
-        if (msg.type === 'CHECK_MEDIA') return { found: opts?.frameId === 9 };
+        if (msg.type === 'CHECK_MEDIA') return { found: opts?.frameId === 9, playing: opts?.frameId === 9 };
         if (msg.type === 'START_CAPTURE') return { ok: true };
         if (msg.type === 'STOP_CAPTURE') {
           stoppedFrame = opts?.frameId;
@@ -299,7 +299,7 @@ describe('Orchestrator.clearTab', () => {
   it('clears state when tab closes during recording', async () => {
     const orch = await loadOrchestrator({
       sendMessage: async (_t, msg) => {
-        if (msg.type === 'CHECK_MEDIA') return { found: true };
+        if (msg.type === 'CHECK_MEDIA') return { found: true, playing: true };
         if (msg.type === 'START_CAPTURE') return { ok: true };
         return undefined;
       },
@@ -409,6 +409,130 @@ describe('Orchestrator.exportRecordingById', () => {
   });
 });
 
+describe('Orchestrator: arm and toggle', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  it('toggle on idle with audio playing starts recording', async () => {
+    const orch = await loadOrchestrator({
+      sendMessage: async (_t, msg) => {
+        if (msg.type === 'CHECK_MEDIA') return { found: true, playing: true };
+        if (msg.type === 'START_CAPTURE') return { ok: true };
+        return undefined;
+      },
+    });
+    const result = await orch.toggleRecording(7);
+    expect(result.ok).toBe(true);
+    expect(orch.getTabState(7)).toBe('recording');
+  });
+
+  it('toggle on idle with nothing playing arms the tab', async () => {
+    const armedFrames: number[] = [];
+    const orch = await loadOrchestrator({
+      sendMessage: async (_t, msg, opts) => {
+        if (msg.type === 'CHECK_MEDIA') return { found: false, playing: false };
+        if (msg.type === 'START_WEBAUDIO_CAPTURE') return { ok: false, error: 'no ctx' };
+        if (msg.type === 'ARM_CAPTURE') {
+          armedFrames.push(opts?.frameId ?? -1);
+          return { ok: true };
+        }
+        return undefined;
+      },
+    });
+    const result = await orch.toggleRecording(7);
+    expect(result.ok).toBe(true);
+    expect(orch.getTabState(7)).toBe('armed');
+    expect(armedFrames.length).toBeGreaterThan(0);
+  });
+
+  it('toggle on an armed tab disarms it back to idle', async () => {
+    const disarmedFrames: number[] = [];
+    const orch = await loadOrchestrator({
+      sendMessage: async (_t, msg, opts) => {
+        if (msg.type === 'CHECK_MEDIA') return { found: false, playing: false };
+        if (msg.type === 'START_WEBAUDIO_CAPTURE') return { ok: false, error: 'no ctx' };
+        if (msg.type === 'ARM_CAPTURE') return { ok: true };
+        if (msg.type === 'DISARM_CAPTURE') {
+          disarmedFrames.push(opts?.frameId ?? -1);
+          return { ok: true };
+        }
+        return undefined;
+      },
+    });
+    await orch.toggleRecording(7);
+    expect(orch.getTabState(7)).toBe('armed');
+    const result = await orch.toggleRecording(7);
+    expect(result.ok).toBe(true);
+    expect(orch.getTabState(7)).toBe('idle');
+    expect(disarmedFrames.length).toBeGreaterThan(0);
+  });
+
+  it('toggle on a recording tab stops it', async () => {
+    const orch = await loadOrchestrator({
+      sendMessage: async (_t, msg) => {
+        if (msg.type === 'CHECK_MEDIA') return { found: true, playing: true };
+        if (msg.type === 'START_CAPTURE') return { ok: true };
+        if (msg.type === 'STOP_CAPTURE') return { ok: true };
+        return undefined;
+      },
+    });
+    await orch.toggleRecording(5);
+    expect(orch.getTabState(5)).toBe('recording');
+    const result = await orch.toggleRecording(5);
+    expect(result.ok).toBe(true);
+    expect(orch.getTabState(5)).toBe('processing');
+  });
+
+  it('onArmedStarted promotes the winning frame and disarms the others', async () => {
+    const disarmedFrames: number[] = [];
+    let stoppedFrame: number | undefined;
+    const orch = await loadOrchestrator({
+      getAllFrames: async () => [{ frameId: 0 }, { frameId: 3 }],
+      sendMessage: async (_t, msg, opts) => {
+        if (msg.type === 'CHECK_MEDIA') return { found: false, playing: false };
+        if (msg.type === 'START_WEBAUDIO_CAPTURE') return { ok: false, error: 'no ctx' };
+        if (msg.type === 'ARM_CAPTURE') return { ok: true };
+        if (msg.type === 'DISARM_CAPTURE') {
+          disarmedFrames.push(opts?.frameId ?? -1);
+          return { ok: true };
+        }
+        if (msg.type === 'STOP_CAPTURE') {
+          stoppedFrame = opts?.frameId;
+          return { ok: true };
+        }
+        return undefined;
+      },
+    });
+    await orch.armRecording(9);
+    expect(orch.getTabState(9)).toBe('armed');
+    await orch.onArmedStarted(9, 3);
+    expect(orch.getTabState(9)).toBe('recording');
+    expect(disarmedFrames).toContain(0);
+    expect(disarmedFrames).not.toContain(3);
+    // The active frame is the one that fired: STOP must route to it.
+    await orch.stopRecording(9);
+    expect(stoppedFrame).toBe(3);
+  });
+
+  it('onArmedStarted aborts a late frame when the tab is no longer armed', async () => {
+    const abortedFrames: number[] = [];
+    const orch = await loadOrchestrator({
+      sendMessage: async (_t, msg, opts) => {
+        if (msg.type === 'ABORT_CAPTURE') {
+          abortedFrames.push(opts?.frameId ?? -1);
+          return { ok: true };
+        }
+        return undefined;
+      },
+    });
+    // Tab was never armed.
+    await orch.onArmedStarted(7, 2);
+    expect(abortedFrames).toContain(2);
+    expect(orch.getTabState(7)).toBe('idle');
+  });
+});
+
 describe('Orchestrator: max-duration auto-stop', () => {
   beforeEach(() => {
     vi.resetModules();
@@ -420,7 +544,7 @@ describe('Orchestrator: max-duration auto-stop', () => {
       settings: { maxDurationSec: 1 },
       sendMessage: async (_t, msg) => {
         calls.push(msg.type);
-        if (msg.type === 'CHECK_MEDIA') return { found: true };
+        if (msg.type === 'CHECK_MEDIA') return { found: true, playing: true };
         if (msg.type === 'START_CAPTURE') return { ok: true };
         if (msg.type === 'STOP_CAPTURE') return { ok: true };
         return undefined;

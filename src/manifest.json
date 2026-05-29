@@ -53,7 +53,7 @@
       "suggested_key": {
         "default": "Alt+Shift+R"
       },
-      "description": "Start or stop recording on the active tab"
+      "description": "Record/stop the active tab; if nothing is playing yet, arm the next playback"
     }
   }
 }

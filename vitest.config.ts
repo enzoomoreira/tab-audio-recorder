@@ -1,6 +1,9 @@
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  // Unit tests are never the E2E bridge build; define the flag so the build-time
+  // `__TEST_BRIDGE__` constant resolves (the production build sets it via vite).
+  define: { __TEST_BRIDGE__: 'false' },
   test: {
     environment: 'happy-dom',
     include: ['src/**/*.test.ts'],

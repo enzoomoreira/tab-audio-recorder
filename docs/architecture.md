@@ -46,8 +46,9 @@ parts:
 - **Background `type: "module"`** — the background is an ES module, so it uses
   static `import`. It is **non-persistent** (Firefox MV3 event page); see
   [state-and-lifecycle.md](state-and-lifecycle.md).
-- **`commands.record-toggle`** binds `Alt+Shift+R` to start/stop on the active
-  tab, handled in `src/background/index.ts`.
+- **`commands.record-toggle`** binds `Alt+Shift+R` to the record/arm/stop toggle
+  on the active tab — the same logic as the popup button — handled in
+  `src/background/index.ts`.
 - **`options_ui.open_in_tab: true`** opens the settings page as a full tab, not a
   popup.
 
@@ -98,23 +99,28 @@ There are two messaging shapes in play:
 
 | Message                  | Direction                 | Shape            | Purpose                                             |
 | ------------------------ | ------------------------- | ---------------- | --------------------------------------------------- |
-| `GET_TAB_STATE`          | Popup -> Background       | request/response | Read a tab's `idle`/`recording`/`processing` state  |
-| `START_RECORDING`        | Popup -> Background       | request/response | Begin capture on a tab (runs strategy selection)    |
-| `STOP_RECORDING`         | Popup -> Background       | request/response | Stop capture on a tab                               |
+| `GET_TAB_STATE`          | Popup -> Background       | request/response | Read a tab's `idle`/`armed`/`recording`/`processing` state |
+| `TOGGLE_RECORDING`       | Popup -> Background       | request/response | One button: stop / disarm / start-now / arm, by state |
 | `OPEN_MANAGER`           | Popup -> Background       | proactive        | Open the recordings manager tab                     |
-| `CHECK_MEDIA`            | Background -> Content     | request/response | "Has this frame played a capturable media element?" |
+| `CHECK_MEDIA`            | Background -> Content     | request/response | "Is a media element playing in this frame?" (`{ found, playing }`) |
 | `START_CAPTURE`          | Background -> Content     | request/response | Start media-element (`captureStream`) capture       |
 | `START_NETWORK_CAPTURE`  | Background -> Content     | request/response | Start network-fetch capture                         |
 | `START_WEBAUDIO_CAPTURE` | Background -> Content     | request/response | Start Web Audio capture                             |
 | `STOP_CAPTURE`           | Background -> Content     | request/response | Stop the active recorder in the frame               |
+| `ARM_CAPTURE`            | Background -> Content     | request/response | Arm the element hook to auto-capture the next play  |
+| `DISARM_CAPTURE`         | Background -> Content     | request/response | Cancel a pending arm                                |
+| `ABORT_CAPTURE`          | Background -> Content     | request/response | Discard an armed capture a losing frame started     |
 | `RECORDING_COMPLETE`     | Content -> Background     | proactive        | Deliver the finished `CaptureResult` blob           |
 | `RECORDING_ERROR`        | Content -> Background     | proactive        | Report a mid-capture failure                        |
+| `ARMED_STARTED`          | Content -> Background     | proactive        | An armed frame auto-started capture on `play()`     |
 | `LIST_RECORDINGS`        | Manager -> Background     | request/response | Query metadata (filter + sort)                      |
 | `DELETE_RECORDING`       | Manager -> Background     | request/response | Delete a recording (metadata + blob)                |
 | `GET_BLOB`               | Manager -> Background     | request/response | Fetch a blob for in-page playback                   |
 | `EXPORT_RECORDING`       | Manager -> Background     | request/response | Run the export pipeline for one recording           |
 | `TEST_START_RECORDING`   | Test bridge -> Background | request/response | E2E-only; stripped from production                  |
 | `TEST_STOP_RECORDING`    | Test bridge -> Background | request/response | E2E-only; stripped from production                  |
+| `TEST_ARM_RECORDING`     | Test bridge -> Background | request/response | E2E-only; stripped from production                  |
+| `TEST_GET_LOGS`          | Test bridge -> Background | request/response | E2E-only; returns the background log buffer          |
 
 > Note: the background<->MAIN-world hooks do **not** use this bus. The MAIN
 > world cannot call `browser.*`, so the ISOLATED drivers (`WebAudioRecorder`,
@@ -132,7 +138,13 @@ selection and the capture strategies are summarized here and detailed in
 Popup click / Alt+Shift+R
         |
         v
-START_RECORDING { tabId }                         (popup -> background)
+TOGGLE_RECORDING { tabId }                        (popup -> background)
+        |
+        v
+Orchestrator.toggleRecording(tabId)               (src/background/Orchestrator.ts)
+   |  recording -> stopRecording   armed -> disarm
+   |  idle + nothing playing -> armRecording  (auto-starts on next play(); see capture.md)
+   |  idle + audio already playing -> startRecording (below)
         |
         v
 Orchestrator.startRecording(tabId)                (src/background/Orchestrator.ts)
@@ -153,7 +165,7 @@ Orchestrator.startRecording(tabId)                (src/background/Orchestrator.t
         the optional max-duration timer <-------------------------'
         |
         v
-   (user records...)  STOP_RECORDING { tabId }     (popup -> background)
+   (user records...)  TOGGLE_RECORDING { tabId }   (popup -> background)
         |
         v
 Orchestrator.stopRecording -> tab 'processing', STOP_CAPTURE -> frame

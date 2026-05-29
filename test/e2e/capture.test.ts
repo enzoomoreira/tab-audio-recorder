@@ -1,14 +1,16 @@
 // @vitest-environment node
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { By } from 'selenium-webdriver';
 import { launchDriver, type E2EContext } from './fixture';
 import { startServer, type StaticServer } from './server';
 import {
   startRecording,
   stopRecording,
+  armRecording,
   waitForRecording,
   waitForFailedRecording,
   clearRecordings,
+  dumpDiagnostics,
 } from './helpers';
 
 const RECORD_DURATION_MS = 3_000;
@@ -29,6 +31,14 @@ describe('E2E capture per technique', () => {
 
   beforeEach(async () => {
     await clearRecordings(ctx.driver);
+  });
+
+  // On failure, dump a screenshot + the background log buffer so a red test says
+  // *why* (which capture strategy ran, what error) instead of just "got null".
+  afterEach(async (testCtx) => {
+    if (testCtx.task.result?.state === 'fail') {
+      await dumpDiagnostics(ctx.driver, testCtx.task.name);
+    }
   });
 
   async function captureFor(page: string) {
@@ -110,6 +120,22 @@ describe('E2E capture per technique', () => {
     await stopRecording(ctx.driver);
     const refused = await waitForFailedRecording(ctx.driver);
     expect(refused).toBe(true);
+  }, 60_000);
+
+  it('15 - arm then play auto-captures from the start', async () => {
+    await ctx.driver.get(`${ctx.baseUrl}/15-arm-then-play.html`);
+    // Arm BEFORE any audio plays -- nothing is playing yet, so this is the arm path.
+    await armRecording(ctx.driver);
+    // Deliberate gap: the arm must persist and capture must start on play(),
+    // not require the user to race the audio.
+    await new Promise((r) => setTimeout(r, 1000));
+    // Now play: the element hook auto-starts capture inside play().
+    await ctx.driver.findElement(By.css('[data-testid="start"]')).click();
+    await new Promise((r) => setTimeout(r, RECORD_DURATION_MS));
+    await stopRecording(ctx.driver);
+    const result = await waitForRecording(ctx.driver);
+    expect(result).not.toBeNull();
+    expect(result?.lastSize).toBeGreaterThan(0);
   }, 60_000);
 
   it('09 - <audio> in cross-origin iframe found by P2 frameId routing', async () => {
