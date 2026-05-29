@@ -20,9 +20,7 @@ import type { InboundMessage } from '../types';
 const logger = createLogger('Background');
 
 // --- Boot: rehydrate state (survives MV3 suspension), load settings ---
-// Exposed as a promise so event handlers that fire on a fresh wake (e.g. the
-// hotkey) can await hydration before reading per-tab state.
-const ready = (async () => {
+void (async () => {
   await hydrate();
   const settings = await getSettings();
   setVerbose(settings.verboseLogging);
@@ -157,12 +155,10 @@ browser.webRequest.onHeadersReceived.addListener(
 
 // --- Hotkey: record-toggle ---
 // Same logic as the popup button: stop / disarm / start-now / arm, decided from
-// the tab state. Works with the popup closed (the listener lives here in the
-// background). `await ready` guards against the listener firing on a fresh MV3
-// wake before state has been rehydrated.
+// the tab state. The listener lives in the background, so it works with the popup
+// closed.
 browser.commands.onCommand.addListener(async (command) => {
   if (command !== 'record-toggle') return;
-  await ready;
 
   const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) {

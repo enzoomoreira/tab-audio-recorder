@@ -119,8 +119,7 @@ The invariant "a tab is always released" is enforced from several directions:
 
 ## Hotkey path
 
-`browser.commands.onCommand` handles `record-toggle` (`Alt+Shift+R`): after
-`await ready` (so a fresh MV3 wake has rehydrated state before it is read) it calls
+`browser.commands.onCommand` handles `record-toggle` (`Alt+Shift+R`): it calls
 `toggleRecording` on the active tab — the exact same entry point as the popup
 button, so the hotkey records, arms, disarms, or stops by state with no separate
 code path. The listener lives in the background, so it works with the popup closed.
