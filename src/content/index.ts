@@ -1,10 +1,8 @@
-import { DOMScanner } from './DOMScanner';
-import { StreamRecorder } from './StreamRecorder';
+import { MediaElementRecorder } from './MediaElementRecorder';
 import { NetworkRecorder } from './NetworkRecorder';
 import { WebAudioRecorder } from './WebAudioRecorder';
 import { createLogger } from '../shared/Logger';
 import type { BgToContentMessage, IRecorder, ActionResult } from '../types';
-import type { DiagnosticReport } from './DOMScanner';
 
 const logger = createLogger('Content');
 
@@ -15,7 +13,6 @@ if (WIN.__tabAudioRecorderLoaded) {
 } else {
   WIN.__tabAudioRecorderLoaded = true;
 
-  const scanner = new DOMScanner();
   let activeRecorder: IRecorder | null = null;
 
   // Wire a recorder's spontaneous-error callback so a mid-capture failure
@@ -29,9 +26,9 @@ if (WIN.__tabAudioRecorderLoaded) {
   }
 
   browser.runtime.onMessage.addListener(
-    (message: BgToContentMessage | { type: 'DIAGNOSE' }): Promise<unknown> | undefined => {
+    (message: BgToContentMessage): Promise<unknown> | undefined => {
       if (message.type === 'CHECK_MEDIA') {
-        return Promise.resolve({ found: scanner.hasMedia() });
+        return new MediaElementRecorder().probe().then((found) => ({ found }));
       }
 
       if (message.type === 'START_CAPTURE') {
@@ -50,11 +47,6 @@ if (WIN.__tabAudioRecorderLoaded) {
         return handleStop();
       }
 
-      if (message.type === 'DIAGNOSE') {
-        const report: DiagnosticReport = scanner.diagnose();
-        return Promise.resolve(report);
-      }
-
       return undefined;
     },
   );
@@ -63,13 +55,9 @@ if (WIN.__tabAudioRecorderLoaded) {
     if (activeRecorder?.isRecording()) {
       return { ok: false, error: 'Already recording' };
     }
-    const element = scanner.find();
-    if (!element) {
-      return { ok: false, error: 'No media element found on this page' };
-    }
     try {
-      const rec = new StreamRecorder();
-      rec.start(element, bitrate);
+      const rec = new MediaElementRecorder();
+      await rec.start(bitrate);
       activeRecorder = rec;
       wireErrors(rec);
       return { ok: true };

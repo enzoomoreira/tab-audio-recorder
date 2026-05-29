@@ -9,8 +9,10 @@ synthesize sound through the Web Audio API.
 
 - **Three capture strategies, tried in order** so a single Record button works
   across very different sites:
-  1. **DOM element** — `captureStream()` on the first playing `<audio>`/`<video>`
-     found, including inside Shadow DOM and same-origin iframes.
+  1. **Media element** — `captureStream()` on a played `<audio>`/`<video>`,
+     found by hooking `play()` in the page so it also works for detached
+     `new Audio()` players (e.g. WhatsApp Web voice messages) and elements in
+     closed shadow roots.
   2. **Network stream** — when no media element exists, a detected audio stream
      URL (sniffed by `Content-Type`) is fetched and recorded.
   3. **Web Audio** — a `document_start` hook taps the page's `AudioContext`
@@ -68,9 +70,10 @@ a WebExtension:
   typed message bus, runs the three-strategy `startRecording`, and the
   save/export/prune pipeline. State is persisted to `storage.session` so it
   survives the non-persistent MV3 background being suspended mid-recording.
-- `src/content/` — the capture strategies (`StreamRecorder`, `NetworkRecorder`,
-  `WebAudioRecorder`) plus `DOMScanner` (recursive media detection) and
-  `AudioContextHook` (MAIN-world Web Audio tap).
+- `src/content/` — the capture strategies (`MediaElementRecorder`,
+  `NetworkRecorder`, `WebAudioRecorder`) plus their `document_start` MAIN-world
+  hooks `MediaElementHook` (taps played media elements, including detached ones)
+  and `AudioContextHook` (Web Audio tap).
 - `src/manager/`, `src/popup/`, `src/settings/` — the three UI surfaces.
 - `src/shared/` — `Repository` (IndexedDB), `Settings`, `Logger`,
   `FilenameTemplate`, `SessionState`, `AudioEncoder` (WAV/MP3 transcode).

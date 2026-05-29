@@ -16,8 +16,8 @@ classes.
 
 ```
 startRecording(tabId)
-  1. findFrameWithMedia(tabId)              -> a frame with an <audio>/<video>?
-        yes -> START_CAPTURE (DOM)          -> StreamRecorder
+  1. findFrameWithMedia(tabId)              -> a frame that has played a media element?
+        yes -> START_CAPTURE                -> MediaElementRecorder / MediaElementHook
   2. findFrameWithStreamURL(tabId)          -> a sniffed audio stream URL?
         yes -> START_NETWORK_CAPTURE        -> NetworkRecorder
   3. for each frame: START_WEBAUDIO_CAPTURE -> probe AudioContext, tap it
@@ -25,7 +25,7 @@ startRecording(tabId)
   none -> { ok: false, error: 'No audio source detected ...' }
 ```
 
-The order is deliberate: DOM `captureStream` is the highest-fidelity and most
+The order is deliberate: element `captureStream` is the highest-fidelity and most
 common case, network fetch is exact when a discrete stream URL exists, and the
 Web Audio tap is the catch-all for synthesized audio that never touches a media
 element. The first strategy that returns `{ ok: true }` wins; the tab is marked
@@ -49,50 +49,75 @@ cross-origin iframe is unreachable from the top document's DOM, but the browser
 still injects our content script into it, and `frameId` routing delivers
 start/stop to it directly.
 
-## Strategy 1: DOM element (`captureStream`)
+## Strategy 1: Media element (`captureStream`)
 
-Used when the page has an `<audio>` or `<video>` element. Two pieces:
-`DOMScanner` finds the element, `StreamRecorder` records it.
+Used when the page plays an `<audio>` or `<video>` element. Two pieces: the
+MAIN-world `MediaElementHook` tracks and captures the element, and the
+ISOLATED-world `MediaElementRecorder` drives it.
 
-### DOMScanner (`src/content/DOMScanner.ts`)
+### Why the MAIN world
 
-Recursively scans for media elements and returns the best candidate:
+A media element can play without ever being in the document: a page can do
+`new Audio(blobUrl).play()` and never call `appendChild`. WhatsApp Web does
+exactly this for voice messages (the decrypted Opus blob is fed to a detached
+element). Such an element is invisible to `document.querySelectorAll('audio')`,
+and the ISOLATED content script cannot patch the page's own
+`HTMLMediaElement.prototype` to intercept playback either. So the element half
+runs in the **MAIN** world, like the Web Audio hook. Patching the prototype there
+also catches elements inside **closed** shadow roots, which a DOM walk cannot
+reach.
 
-- **Search scope, per frame:** the document, every open **Shadow DOM** root
-  (walked recursively), and every **same-origin iframe** (cross-origin iframes
-  throw on `contentDocument` access and are skipped — they are covered by the
-  `all_frames` injection + frame routing above). Recursion is bounded by
-  `MAX_SCAN_DEPTH = 8` and a visited-document set guards against cycles.
-- **Priority:** playing `<video>` > playing `<audio>` > any `<video>` > any
-  `<audio>`. "Playing" means `!paused && readyState >= HAVE_CURRENT_DATA`.
-- `hasMedia()` is just `find() !== null`; it answers the `CHECK_MEDIA` probe.
-- `diagnose()` returns a `DiagnosticReport` listing every element found (direct,
-  shadow, iframe) with its `src`, `paused`, `readyState`, `duration` — the
-  payload behind the `DIAGNOSE` debug message.
+### MediaElementHook (`src/content/MediaElementHook.ts`) — MAIN world
 
-### StreamRecorder (`src/content/StreamRecorder.ts`)
+Runs at `document_start` so it patches `HTMLMediaElement.prototype.play` before
+any page script runs. It is self-contained (no imports, no `browser.*`):
 
-Wraps `MediaRecorder` over the element's captured stream. The fiddly parts, each
-there for a concrete reason:
+- **Tracks every played element.** Each `play()` call records the element in a
+  most-recent-last list, capped at 16 so a long-lived page cannot grow it
+  unbounded (holding references also pins detached elements against GC). This
+  catches attached elements, detached `new Audio()` elements, and elements inside
+  closed shadow roots alike.
+- **Picks the capture target** on `START`: a currently-playing element (video
+  preferred — it carries the audio we want), else the most recently played one.
+- **DRM/EME refusal.** If the chosen element has `mediaKeys`, capture would yield
+  silence under Firefox's EME policy, so it is refused up front with a clear error
+  instead of saving a silent file. (E2E: `13-drm-fake`.)
+- **Waits for the audio track.** `captureStream()` at the instant playback starts
+  can return a stream whose audio track has not been added yet (element
+  `readyState` 0). The hook waits briefly (`addtrack` / `playing` events, 3s cap)
+  so it does not start recording an empty stream.
+- **Audio-only stream rebuild.** A `<video>` capture carries a video track too,
+  which `MediaRecorder` rejects under an audio-only mimeType, so it records a
+  fresh `MediaStream` built from `getAudioTracks()` only. (The "YouTube bug" the
+  E2E test `02-video-with-audio` guards against.) Zero audio tracks throws.
+- **MIME selection + chunking.** Picks the first supported of
+  `audio/webm;codecs=opus`, `audio/webm`, `audio/ogg;codecs=opus`, `audio/ogg`;
+  `recorder.start(1000)` emits a chunk every second, assembled into one `Blob` on
+  stop. A spontaneous mid-capture `onerror` reports `EL_ERROR`, which the ISOLATED
+  driver forwards as `RECORDING_ERROR`.
 
-- **Firefox Xray wrapper.** Content scripts see a security wrapper around page
-  objects; `element.wrappedJSObject` (falling back to the element itself) is used
-  to reach the real `captureStream` / `mozCaptureStream`.
-- **Audio-only stream rebuild.** A `<video>` captureStream carries both audio and
-  video tracks, and `MediaRecorder` rejects a video track under an audio-only
-  mimeType. The recorder builds a fresh `MediaStream` from `getAudioTracks()`
-  only. (This is the "YouTube bug" the E2E test `02-video-with-audio` guards
-  against.) A stream with zero audio tracks throws.
-- **DRM/EME refusal.** If the element has `mediaKeys`, capture would yield
-  silence under Firefox's EME policy, so it is refused up front with a clear
-  error instead of saving a silent file. (E2E: `13-drm-fake`.)
-- **MIME selection.** Picks the first supported of
-  `audio/webm;codecs=opus`, `audio/webm`, `audio/ogg;codecs=opus`, `audio/ogg`.
-- **Chunking.** `recorder.start(1000)` emits a data chunk every second; chunks
-  accumulate and are assembled into one `Blob` on stop.
-- **Spontaneous errors.** A mid-capture `onerror` (not triggered by stop) clears
-  local state and fires the `onError` callback, which the content script forwards
-  as `RECORDING_ERROR`.
+### MediaElementRecorder (`src/content/MediaElementRecorder.ts`) — ISOLATED world
+
+The ISOLATED half the orchestrator drives. Because the element lives in the MAIN
+world (and may be detached, so unreachable from here), detection and capture both
+happen in the hook; this class just speaks a small `window.postMessage` protocol:
+
+| ISOLATED -> MAIN (`tab-audio-recorder`) | MAIN -> ISOLATED (`tab-audio-recorder-page`)   |
+| --------------------------------------- | ---------------------------------------------- |
+| `EL_PROBE`                              | `EL_PROBE_RESULT { found }`                    |
+| `EL_START { bitrate }`                  | `EL_STARTED { ok, error? }`                    |
+| `EL_STOP`                               | `EL_STOPPED { ok, blob, mimeType, ... }`       |
+| (passive listen)                        | `EL_ERROR { error }` (spontaneous mid-capture) |
+
+- `probe()` (1s timeout) answers the `CHECK_MEDIA` frame check: has the page
+  played any capturable element? If not, the strategy is skipped without error.
+- `start()` / `stop()` wait for the matching reply (10s timeout); the assembled
+  `Blob` is structured-cloneable, so it crosses the postMessage boundary and then
+  the runtime messaging boundary back to the background.
+
+> The Web Audio hook (Strategy 3) shares this `tab-audio-recorder` /
+> `tab-audio-recorder-page` channel; the two stay apart through distinct message
+> types (`EL_*` here vs `PROBE`/`START`/`STOP` there).
 
 ## Strategy 2: Network stream (fetch)
 
@@ -149,7 +174,7 @@ graph. It is fully self-contained (no imports, no `browser.*`). What it does:
   context the page creates is tracked in a set.
 - On `START`, it picks a running context (or any context), builds a
   `MediaRecorder` over the tap's stream, and records — same MIME selection and
-  1-second chunking as `StreamRecorder`.
+  1-second chunking as the element hook.
 
 ### WebAudioRecorder (`src/content/WebAudioRecorder.ts`) — ISOLATED world
 
@@ -193,16 +218,17 @@ Most capture paths have a dedicated fixture under `test-pages/`, exercised by th
 Selenium suite (`test/e2e/capture.test.ts`). Useful when adding or debugging a
 strategy:
 
-| Test page                     | Exercises                                            |
-| ----------------------------- | ---------------------------------------------------- |
-| `01-audio-src-direct.html`    | DOM strategy on a plain `<audio>`                    |
-| `02-video-with-audio.html`    | DOM strategy, audio-only rebuild (YouTube-bug guard) |
-| `03-mse-blob.html`            | DOM strategy on a MediaSource-fed `<audio>`          |
-| `06-webaudio-pure.html`       | Web Audio strategy (an `OscillatorNode`)             |
-| `07-shadow-dom.html`          | DOMScanner reaching into a Shadow DOM root           |
-| `08-iframe-same-origin.html`  | DOMScanner reaching into a same-origin iframe        |
-| `09-iframe-cross-origin.html` | Cross-origin frame found via `all_frames` + routing  |
-| `13-drm-fake.html`            | DRM/EME refusal (faked `mediaKeys`)                  |
+| Test page                     | Exercises                                                 |
+| ----------------------------- | --------------------------------------------------------- |
+| `01-audio-src-direct.html`    | Element strategy on a plain `<audio>`                     |
+| `02-video-with-audio.html`    | Element strategy, audio-only rebuild (YouTube-bug guard)  |
+| `03-mse-blob.html`            | Element strategy on a MediaSource-fed `<audio>`           |
+| `06-webaudio-pure.html`       | Web Audio strategy (an `OscillatorNode`)                  |
+| `07-shadow-dom.html`          | `play()` hook catching an element in a Shadow DOM root    |
+| `08-iframe-same-origin.html`  | `play()` hook catching an element in a same-origin iframe |
+| `09-iframe-cross-origin.html` | Cross-origin frame reached via `all_frames` + routing     |
+| `13-drm-fake.html`            | DRM/EME refusal (faked `mediaKeys`)                       |
+| `14-detached-audio.html`      | Detached `new Audio()` (WhatsApp-style), never in DOM     |
 
 The **network strategy has no E2E fixture** — it is covered by
 `NetworkRecorder.test.ts` (unit) only. See

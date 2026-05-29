@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>14 - detached audio (new Audio)</title>
+    <script src="lib/audio.js"></script>
+  </head>
+  <body>
+    <h1>14 - detached &lt;audio&gt; via new Audio(), never appended to the DOM</h1>
+    <p>Expected strategy: <strong>DOM</strong> (element-capture hook)</p>
+    <p>
+      Mimics WhatsApp Web voice messages: a blob-fed audio element that lives only
+      in JS and is invisible to document.querySelectorAll('audio').
+    </p>
+    <button data-testid="start">Start audio</button>
+    <script>
+      window.__expected = { strategy: 'DOM', technique: 'detached-audio' };
+      // Module-scoped reference so the detached element is not garbage-collected.
+      let player = null;
+      window.__startAudio = () => {
+        player = new Audio(window.sineWavUrl(10, 440));
+        player.loop = true;
+        return player.play();
+      };
+      window.__stopAudio = () => player && player.pause();
+      document
+        .querySelector('[data-testid="start"]')
+        .addEventListener('click', () => window.__startAudio());
+
+      // Cross-origin parent (page 09 pattern) reaches us via postMessage.
+      window.addEventListener('message', (event) => {
+        if (event.data === 'START') window.__startAudio();
+        if (event.data === 'STOP') window.__stopAudio();
+      });
+    </script>
+  </body>
+</html>

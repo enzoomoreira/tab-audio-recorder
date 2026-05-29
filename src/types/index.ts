@@ -43,11 +43,6 @@ export interface IRepository {
 
 // === Media capture ===
 
-export interface IDetector {
-  find(): HTMLMediaElement | null;
-  hasMedia(): boolean;
-}
-
 export interface CaptureResult {
   blob: Blob;
   mimeType: string;
@@ -56,14 +51,11 @@ export interface CaptureResult {
   endedAt: number;
 }
 
-// Shared interface for both capture strategies (DOM element vs network fetch)
+// Shared interface for every content-side capture strategy (element capture,
+// network fetch, Web Audio tap).
 export interface IRecorder {
   stop(): Promise<CaptureResult>;
   isRecording(): boolean;
-}
-
-export interface IStreamRecorder extends IRecorder {
-  start(element: HTMLMediaElement, bitrate: number): void;
 }
 
 export interface INetworkRecorder extends IRecorder {

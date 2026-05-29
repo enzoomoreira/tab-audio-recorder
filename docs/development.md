@@ -72,7 +72,9 @@ bun run test:watch   # vitest watch
 
 Tests live next to their subject (`Foo.ts` -> `Foo.test.ts`). Logic-heavy modules
 covered today: `Orchestrator`, `SessionState`, `Settings`, `Repository`,
-`AudioEncoder`, `FilenameTemplate`, `DOMScanner`, `NetworkRecorder`.
+`AudioEncoder`, `FilenameTemplate`, `NetworkRecorder`. The MAIN-world hooks
+(`MediaElementHook`, `AudioContextHook`) and their ISOLATED drivers are covered
+end-to-end by the Selenium suite, since they need a real `MediaRecorder`.
 
 ### End-to-end tests
 
@@ -132,9 +134,12 @@ each common change. File paths are the source of truth; line numbers drift.
 ### Add a capture strategy
 
 1. **Recorder class** in `src/content/` implementing `IRecorder` (or the more
-   specific `IStreamRecorder` / `INetworkRecorder` from `src/types/index.ts`):
-   `start(...)`, `stop(): Promise<CaptureResult>`, `isRecording()`, and an
-   `onError` callback.
+   specific `INetworkRecorder` from `src/types/index.ts`): `start(...)`,
+   `stop(): Promise<CaptureResult>`, `isRecording()`, and an `onError` callback.
+   If the strategy must reach page-world objects the ISOLATED script cannot (a
+   detached element, an `AudioContext`), pair it with a self-contained
+   `document_start` MAIN-world hook and talk over `window.postMessage` — see
+   `MediaElementHook` / `AudioContextHook`.
 2. **Message type** — add `START_<X>_CAPTURE` to `BgToContentMessage` in
    `src/types/index.ts`.
 3. **Content handler** — in `src/content/index.ts`, add an `if (message.type === ...)`

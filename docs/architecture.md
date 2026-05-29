@@ -31,13 +31,16 @@ Everything else is a thin surface that sends it messages.
 `src/manifest.json` declares which file runs in which realm. The non-obvious
 parts:
 
-- **Two content scripts, deliberately.** `content/AudioContextHook.ts` runs in
-  the **MAIN** world at `document_start` and `all_frames` — it must patch
-  `AudioContext` before any page script builds its audio graph. `content/index.ts`
-  runs in the default **ISOLATED** world at `document_idle`; it is the realm that
-  can call `browser.runtime.*`. The two halves talk via `window.postMessage`
-  (see [capture.md](capture.md#strategy-3-web-audio-api-hook)).
-- **`all_frames: true`** on both content scripts. Audio can play in any frame,
+- **MAIN-world hooks, deliberately.** `content/AudioContextHook.ts` and
+  `content/MediaElementHook.ts` run in the **MAIN** world at `document_start` and
+  `all_frames`. The first patches `AudioContext` before any page script builds its
+  audio graph; the second patches `HTMLMediaElement.prototype.play` so it can
+  capture media elements the page never inserts into the DOM (e.g. detached
+  `new Audio()` players, as WhatsApp Web uses for voice messages).
+  `content/index.ts` runs in the default **ISOLATED** world at `document_idle`; it
+  is the realm that can call `browser.runtime.*`. The halves talk via
+  `window.postMessage` (see [capture.md](capture.md#strategy-1-media-element-capturestream)).
+- **`all_frames: true`** on all content scripts. Audio can play in any frame,
   including cross-origin iframes the top document cannot reach, so the recorder
   must be injected everywhere and addressed per `frameId`.
 - **Background `type: "module"`** — the background is an ES module, so it uses
@@ -56,25 +59,24 @@ The permission rationale (why each of `tabs`, `webRequest`, `webNavigation`,
 
 Where to look when you are changing a given concern:
 
-| Concern                        | File                                                                  |
-| ------------------------------ | --------------------------------------------------------------------- |
-| Message router (background)    | `src/background/index.ts`                                             |
-| Recording orchestration        | `src/background/Orchestrator.ts`                                      |
-| Per-tab state + persistence    | `src/shared/SessionState.ts`                                          |
-| Media detection (DOM scan)     | `src/content/DOMScanner.ts`                                           |
-| DOM capture strategy           | `src/content/StreamRecorder.ts`                                       |
-| Network capture strategy       | `src/content/NetworkRecorder.ts`                                      |
-| Web Audio capture strategy     | `src/content/WebAudioRecorder.ts` + `src/content/AudioContextHook.ts` |
-| Content-script message handler | `src/content/index.ts`                                                |
-| Persistence (IndexedDB)        | `src/shared/Repository.ts`                                            |
-| Transcode (WAV/MP3)            | `src/shared/AudioEncoder.ts`                                          |
-| Export filename rendering      | `src/shared/FilenameTemplate.ts`                                      |
-| Settings model + storage       | `src/shared/Settings.ts`                                              |
-| Logging                        | `src/shared/Logger.ts`                                                |
-| Domain model + message types   | `src/types/index.ts`                                                  |
-| Popup UI                       | `src/popup/index.ts`                                                  |
-| Manager UI + audio player      | `src/manager/index.ts` + `src/manager/AudioPlayer.ts`                 |
-| Settings UI                    | `src/settings/index.ts`                                               |
+| Concern                        | File                                                                      |
+| ------------------------------ | ------------------------------------------------------------------------- |
+| Message router (background)    | `src/background/index.ts`                                                 |
+| Recording orchestration        | `src/background/Orchestrator.ts`                                          |
+| Per-tab state + persistence    | `src/shared/SessionState.ts`                                              |
+| Element capture strategy       | `src/content/MediaElementRecorder.ts` + `src/content/MediaElementHook.ts` |
+| Network capture strategy       | `src/content/NetworkRecorder.ts`                                          |
+| Web Audio capture strategy     | `src/content/WebAudioRecorder.ts` + `src/content/AudioContextHook.ts`     |
+| Content-script message handler | `src/content/index.ts`                                                    |
+| Persistence (IndexedDB)        | `src/shared/Repository.ts`                                                |
+| Transcode (WAV/MP3)            | `src/shared/AudioEncoder.ts`                                              |
+| Export filename rendering      | `src/shared/FilenameTemplate.ts`                                          |
+| Settings model + storage       | `src/shared/Settings.ts`                                                  |
+| Logging                        | `src/shared/Logger.ts`                                                    |
+| Domain model + message types   | `src/types/index.ts`                                                      |
+| Popup UI                       | `src/popup/index.ts`                                                      |
+| Manager UI + audio player      | `src/manager/index.ts` + `src/manager/AudioPlayer.ts`                     |
+| Settings UI                    | `src/settings/index.ts`                                                   |
 
 ## The message bus
 
@@ -94,36 +96,31 @@ There are two messaging shapes in play:
 
 ### Message catalog
 
-| Message                  | Direction                 | Shape            | Purpose                                            |
-| ------------------------ | ------------------------- | ---------------- | -------------------------------------------------- |
-| `GET_TAB_STATE`          | Popup -> Background       | request/response | Read a tab's `idle`/`recording`/`processing` state |
-| `START_RECORDING`        | Popup -> Background       | request/response | Begin capture on a tab (runs strategy selection)   |
-| `STOP_RECORDING`         | Popup -> Background       | request/response | Stop capture on a tab                              |
-| `OPEN_MANAGER`           | Popup -> Background       | proactive        | Open the recordings manager tab                    |
-| `CHECK_MEDIA`            | Background -> Content     | request/response | "Does this frame have a media element?"            |
-| `START_CAPTURE`          | Background -> Content     | request/response | Start DOM (`captureStream`) capture                |
-| `START_NETWORK_CAPTURE`  | Background -> Content     | request/response | Start network-fetch capture                        |
-| `START_WEBAUDIO_CAPTURE` | Background -> Content     | request/response | Start Web Audio capture                            |
-| `STOP_CAPTURE`           | Background -> Content     | request/response | Stop the active recorder in the frame              |
-| `RECORDING_COMPLETE`     | Content -> Background     | proactive        | Deliver the finished `CaptureResult` blob          |
-| `RECORDING_ERROR`        | Content -> Background     | proactive        | Report a mid-capture failure                       |
-| `LIST_RECORDINGS`        | Manager -> Background     | request/response | Query metadata (filter + sort)                     |
-| `DELETE_RECORDING`       | Manager -> Background     | request/response | Delete a recording (metadata + blob)               |
-| `GET_BLOB`               | Manager -> Background     | request/response | Fetch a blob for in-page playback                  |
-| `EXPORT_RECORDING`       | Manager -> Background     | request/response | Run the export pipeline for one recording          |
-| `TEST_START_RECORDING`   | Test bridge -> Background | request/response | E2E-only; stripped from production                 |
-| `TEST_STOP_RECORDING`    | Test bridge -> Background | request/response | E2E-only; stripped from production                 |
+| Message                  | Direction                 | Shape            | Purpose                                             |
+| ------------------------ | ------------------------- | ---------------- | --------------------------------------------------- |
+| `GET_TAB_STATE`          | Popup -> Background       | request/response | Read a tab's `idle`/`recording`/`processing` state  |
+| `START_RECORDING`        | Popup -> Background       | request/response | Begin capture on a tab (runs strategy selection)    |
+| `STOP_RECORDING`         | Popup -> Background       | request/response | Stop capture on a tab                               |
+| `OPEN_MANAGER`           | Popup -> Background       | proactive        | Open the recordings manager tab                     |
+| `CHECK_MEDIA`            | Background -> Content     | request/response | "Has this frame played a capturable media element?" |
+| `START_CAPTURE`          | Background -> Content     | request/response | Start media-element (`captureStream`) capture       |
+| `START_NETWORK_CAPTURE`  | Background -> Content     | request/response | Start network-fetch capture                         |
+| `START_WEBAUDIO_CAPTURE` | Background -> Content     | request/response | Start Web Audio capture                             |
+| `STOP_CAPTURE`           | Background -> Content     | request/response | Stop the active recorder in the frame               |
+| `RECORDING_COMPLETE`     | Content -> Background     | proactive        | Deliver the finished `CaptureResult` blob           |
+| `RECORDING_ERROR`        | Content -> Background     | proactive        | Report a mid-capture failure                        |
+| `LIST_RECORDINGS`        | Manager -> Background     | request/response | Query metadata (filter + sort)                      |
+| `DELETE_RECORDING`       | Manager -> Background     | request/response | Delete a recording (metadata + blob)                |
+| `GET_BLOB`               | Manager -> Background     | request/response | Fetch a blob for in-page playback                   |
+| `EXPORT_RECORDING`       | Manager -> Background     | request/response | Run the export pipeline for one recording           |
+| `TEST_START_RECORDING`   | Test bridge -> Background | request/response | E2E-only; stripped from production                  |
+| `TEST_STOP_RECORDING`    | Test bridge -> Background | request/response | E2E-only; stripped from production                  |
 
-The content script also accepts an internal `DIAGNOSE` message (handled in
-`src/content/index.ts`) that returns a `DiagnosticReport` of every media element
-found in the frame. It is a latent debugging hook — handled but not currently
-wired to any sender — so triggering it means sending the message by hand (e.g.
-from a privileged console).
-
-> Note: the background<->MAIN-world hook does **not** use this bus. The MAIN
-> world cannot call `browser.*`, so `WebAudioRecorder` (ISOLATED) and
-> `AudioContextHook` (MAIN) communicate with their own `window.postMessage`
-> protocol tagged `tab-audio-recorder` / `tab-audio-recorder-page`.
+> Note: the background<->MAIN-world hooks do **not** use this bus. The MAIN
+> world cannot call `browser.*`, so the ISOLATED drivers (`WebAudioRecorder`,
+> `MediaElementRecorder`) and their MAIN-world hooks (`AudioContextHook`,
+> `MediaElementHook`) communicate with their own `window.postMessage` protocol
+> tagged `tab-audio-recorder` / `tab-audio-recorder-page`.
 
 ## End-to-end flow of one recording
 
@@ -141,9 +138,9 @@ START_RECORDING { tabId }                         (popup -> background)
 Orchestrator.startRecording(tabId)                (src/background/Orchestrator.ts)
    |  loads Settings
    |
-   |-- Strategy 1: DOM element ------------------------------------.
+   |-- Strategy 1: Media element ----------------------------------.
    |     CHECK_MEDIA across frames -> first frame with media       |
-   |     START_CAPTURE { bitrate } -> StreamRecorder.captureStream |
+   |     START_CAPTURE { bitrate } -> MediaElementHook.captureStream|
    |                                                                |
    |-- Strategy 2: Network stream (if no media element) -----------|
    |     stream URL cached by webRequest sniffing                  |

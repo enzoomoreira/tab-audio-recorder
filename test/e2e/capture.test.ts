@@ -56,6 +56,12 @@ describe('E2E capture per technique', () => {
     expect(result?.lastSize).toBeGreaterThan(0);
   }, 60_000);
 
+  it('14 - detached <audio> (new Audio, never in DOM) captures via element hook', async () => {
+    const result = await captureFor('14-detached-audio.html');
+    expect(result).not.toBeNull();
+    expect(result?.lastSize).toBeGreaterThan(0);
+  }, 60_000);
+
   it('06 - Web Audio pure (OscillatorNode) captures via P3 hook', async () => {
     const result = await captureFor('06-webaudio-pure.html');
     expect(result).not.toBeNull();
