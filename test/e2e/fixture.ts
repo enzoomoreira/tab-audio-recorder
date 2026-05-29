@@ -47,7 +47,9 @@ export async function launchDriver(baseUrl: string, altUrl: string): Promise<E2E
 
   // Install the unpacked extension temporarily (only valid for this session).
   // selenium-webdriver exposes this via driver.installAddon in v4.
-  type WithInstall = WebDriver & { installAddon: (p: string, temporary?: boolean) => Promise<string> };
+  type WithInstall = WebDriver & {
+    installAddon: (p: string, temporary?: boolean) => Promise<string>;
+  };
   const id = await (driver as WithInstall).installAddon(DIST_DIR, true);
   if (id !== EXT_ID) {
     // Firefox may surface a different ID; warn but continue -- specs that need the UUID

@@ -3,9 +3,17 @@
   "name": "Tab Audio Recorder",
   "version": "0.1.0",
   "description": "Record audio from browser tabs for sampling",
+  "icons": {
+    "48": "icons/icon.svg",
+    "96": "icons/icon.svg",
+    "128": "icons/icon.svg"
+  },
   "browser_specific_settings": {
     "gecko": {
-      "id": "tab-audio-recorder@test"
+      "id": "tab-audio-recorder@test",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
     }
   },
   "permissions": ["tabs", "webRequest", "webNavigation", "storage", "downloads"],
@@ -30,7 +38,11 @@
     }
   ],
   "action": {
-    "default_popup": "popup/index.html"
+    "default_popup": "popup/index.html",
+    "default_icon": {
+      "48": "icons/icon.svg",
+      "96": "icons/icon.svg"
+    }
   },
   "options_ui": {
     "page": "settings/index.html",

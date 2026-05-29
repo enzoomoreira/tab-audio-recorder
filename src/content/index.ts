@@ -3,7 +3,7 @@ import { StreamRecorder } from './StreamRecorder';
 import { NetworkRecorder } from './NetworkRecorder';
 import { WebAudioRecorder } from './WebAudioRecorder';
 import { createLogger } from '../shared/Logger';
-import type { BgToContentMessage, IRecorder } from '../types';
+import type { BgToContentMessage, IRecorder, ActionResult } from '../types';
 import type { DiagnosticReport } from './DOMScanner';
 
 const logger = createLogger('Content');
@@ -17,6 +17,16 @@ if (WIN.__tabAudioRecorderLoaded) {
 
   const scanner = new DOMScanner();
   let activeRecorder: IRecorder | null = null;
+
+  // Wire a recorder's spontaneous-error callback so a mid-capture failure
+  // (not triggered by stop) clears local state and notifies the background.
+  function wireErrors(rec: { onError: ((reason: string) => void) | null }): void {
+    rec.onError = (reason) => {
+      logger.error('Recorder errored mid-capture:', reason);
+      activeRecorder = null;
+      void browser.runtime.sendMessage({ type: 'RECORDING_ERROR', payload: { reason } });
+    };
+  }
 
   browser.runtime.onMessage.addListener(
     (message: BgToContentMessage | { type: 'DIAGNOSE' }): Promise<unknown> | undefined => {
@@ -49,7 +59,7 @@ if (WIN.__tabAudioRecorderLoaded) {
     },
   );
 
-  async function handleStartDOM(bitrate: number): Promise<{ ok: boolean; error?: string }> {
+  async function handleStartDOM(bitrate: number): Promise<ActionResult> {
     if (activeRecorder?.isRecording()) {
       return { ok: false, error: 'Already recording' };
     }
@@ -61,6 +71,7 @@ if (WIN.__tabAudioRecorderLoaded) {
       const rec = new StreamRecorder();
       rec.start(element, bitrate);
       activeRecorder = rec;
+      wireErrors(rec);
       return { ok: true };
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
@@ -69,7 +80,7 @@ if (WIN.__tabAudioRecorderLoaded) {
     }
   }
 
-  async function handleStartNetwork(url: string): Promise<{ ok: boolean; error?: string }> {
+  async function handleStartNetwork(url: string): Promise<ActionResult> {
     if (activeRecorder?.isRecording()) {
       return { ok: false, error: 'Already recording' };
     }
@@ -77,6 +88,7 @@ if (WIN.__tabAudioRecorderLoaded) {
       const rec = new NetworkRecorder();
       rec.start(url);
       activeRecorder = rec;
+      wireErrors(rec);
       return { ok: true };
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
@@ -85,7 +97,7 @@ if (WIN.__tabAudioRecorderLoaded) {
     }
   }
 
-  async function handleStartWebAudio(bitrate: number): Promise<{ ok: boolean; error?: string }> {
+  async function handleStartWebAudio(bitrate: number): Promise<ActionResult> {
     if (activeRecorder?.isRecording()) {
       return { ok: false, error: 'Already recording' };
     }
@@ -97,6 +109,7 @@ if (WIN.__tabAudioRecorderLoaded) {
       }
       await rec.start(bitrate);
       activeRecorder = rec;
+      wireErrors(rec);
       return { ok: true };
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
@@ -105,7 +118,7 @@ if (WIN.__tabAudioRecorderLoaded) {
     }
   }
 
-  async function handleStop(): Promise<{ ok: boolean; error?: string }> {
+  async function handleStop(): Promise<ActionResult> {
     if (!activeRecorder?.isRecording()) {
       return { ok: false, error: 'Not recording' };
     }

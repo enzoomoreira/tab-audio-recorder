@@ -32,7 +32,10 @@ interface FoundMedia {
   iframeIndex: number | undefined;
 }
 
-function describeElement(el: HTMLMediaElement, extra?: Partial<DiagnosticElement>): DiagnosticElement {
+function describeElement(
+  el: HTMLMediaElement,
+  extra?: Partial<DiagnosticElement>,
+): DiagnosticElement {
   return {
     tag: el.tagName,
     src: el.src,
@@ -103,7 +106,10 @@ export class DOMScanner implements IDetector {
         );
       } else {
         report.iframeElements.push(
-          describeElement(m.element, m.iframeIndex !== undefined ? { inIframe: m.iframeIndex } : {}),
+          describeElement(
+            m.element,
+            m.iframeIndex !== undefined ? { inIframe: m.iframeIndex } : {},
+          ),
         );
       }
     }
@@ -136,7 +142,15 @@ export class DOMScanner implements IDetector {
 
     root.querySelectorAll('*').forEach((host) => {
       if (host.shadowRoot) {
-        this.scanRoot(host.shadowRoot, 'shadow', host.tagName, iframeIndex, results, visitedDocs, depth + 1);
+        this.scanRoot(
+          host.shadowRoot,
+          'shadow',
+          host.tagName,
+          iframeIndex,
+          results,
+          visitedDocs,
+          depth + 1,
+        );
       }
     });
 

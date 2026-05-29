@@ -3,6 +3,8 @@
 // Each test resets modules and re-imports for isolation.
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { IDBFactory } from 'fake-indexeddb';
+import type { Settings } from '../shared/Settings';
+import type { CaptureResult } from '../types';
 
 type SendMessage = (
   tabId: number,
@@ -10,14 +12,29 @@ type SendMessage = (
   options?: { frameId?: number },
 ) => Promise<{ ok?: boolean; found?: boolean; error?: string } | undefined>;
 
+type DownloadFn = (opts: {
+  url: string;
+  filename: string;
+  conflictAction?: string;
+}) => Promise<number | undefined>;
+
 interface BrowserStubs {
   sendMessage: SendMessage;
   getAllFrames?: (q: { tabId: number }) => Promise<{ frameId: number }[]>;
+  settings?: Partial<Settings>;
+  download?: DownloadFn;
 }
 
 async function loadOrchestrator(stubs: BrowserStubs) {
   vi.resetModules();
   (globalThis as { indexedDB: unknown }).indexedDB = new IDBFactory();
+  // Node lacks object-URL APIs that the export pipeline uses.
+  (
+    globalThis as { URL: { createObjectURL: unknown; revokeObjectURL: unknown } }
+  ).URL.createObjectURL = () => 'blob:fake';
+  (
+    globalThis as { URL: { createObjectURL: unknown; revokeObjectURL: unknown } }
+  ).URL.revokeObjectURL = () => undefined;
   (globalThis as { browser: unknown }).browser = {
     runtime: { getURL: (p: string) => p },
     tabs: {
@@ -29,12 +46,31 @@ async function loadOrchestrator(stubs: BrowserStubs) {
       getAllFrames: stubs.getAllFrames ?? (async () => [{ frameId: 0 }]),
     },
     storage: {
-      local: { get: async () => ({}), set: async () => undefined },
+      local: {
+        get: async () => (stubs.settings ? { settings: stubs.settings } : {}),
+        set: async () => undefined,
+      },
+      session: { get: async () => ({}), set: async () => undefined },
       onChanged: { addListener: () => {} },
     },
-    downloads: { download: async () => 1, onChanged: { addListener: () => {}, removeListener: () => {} } },
+    downloads: {
+      download: stubs.download ?? (async () => 1),
+      onChanged: { addListener: () => {}, removeListener: () => {} },
+    },
   };
   return await import('./Orchestrator');
+}
+
+function captureResult(overrides: Partial<CaptureResult> = {}): CaptureResult {
+  const startedAt = Date.UTC(2026, 0, 1);
+  return {
+    blob: new Blob(['audio-bytes'], { type: 'audio/webm' }),
+    mimeType: 'audio/webm',
+    durationMs: 1000,
+    startedAt,
+    endedAt: startedAt + 1000,
+    ...overrides,
+  };
 }
 
 describe('Orchestrator.startRecording', () => {
@@ -102,7 +138,11 @@ describe('Orchestrator.startRecording', () => {
     const orch = await loadOrchestrator({
       sendMessage: async (_t, msg) => {
         if (msg.type === 'CHECK_MEDIA') return { found: true };
-        if (msg.type === 'START_CAPTURE') return { ok: false, error: 'DRM/EME content cannot be captured (Firefox security policy)' };
+        if (msg.type === 'START_CAPTURE')
+          return {
+            ok: false,
+            error: 'DRM/EME content cannot be captured (Firefox security policy)',
+          };
         return undefined;
       },
     });
@@ -224,7 +264,7 @@ describe('Orchestrator.stopRecording', () => {
   });
 });
 
-describe('Orchestrator.onTabRemoved', () => {
+describe('Orchestrator.clearTab', () => {
   beforeEach(() => {
     vi.resetModules();
   });
@@ -239,7 +279,119 @@ describe('Orchestrator.onTabRemoved', () => {
     });
     await orch.startRecording(1);
     expect(orch.getTabState(1)).toBe('recording');
-    orch.onTabRemoved(1);
+    orch.clearTab(1);
     expect(orch.getTabState(1)).toBe('idle');
+  });
+});
+
+describe('Orchestrator.saveRecording', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  it('persists the recording and releases the tab', async () => {
+    const orch = await loadOrchestrator({ sendMessage: async () => undefined });
+    await orch.saveRecording(7, captureResult());
+    const list = await orch.repository.list();
+    expect(list).toHaveLength(1);
+    expect(list[0]?.sourceHost).toBe('example.com');
+    expect(orch.getTabState(7)).toBe('idle');
+  });
+
+  it('auto-exports through the downloads API when enabled', async () => {
+    const downloads: { filename: string; conflictAction?: string }[] = [];
+    const orch = await loadOrchestrator({
+      sendMessage: async () => undefined,
+      settings: { autoExport: true },
+      download: async (opts) => {
+        downloads.push(opts);
+        return 1;
+      },
+    });
+    await orch.saveRecording(7, captureResult());
+    expect(downloads).toHaveLength(1);
+    expect(downloads[0]?.filename).toMatch(/example\.com/);
+    expect(downloads[0]?.conflictAction).toBe('uniquify');
+  });
+
+  it('does not export when autoExport is off', async () => {
+    const downloads: unknown[] = [];
+    const orch = await loadOrchestrator({
+      sendMessage: async () => undefined,
+      download: async (opts) => {
+        downloads.push(opts);
+        return 1;
+      },
+    });
+    await orch.saveRecording(7, captureResult());
+    expect(downloads).toHaveLength(0);
+  });
+
+  it('prunes oldest recordings beyond maxRecordings', async () => {
+    const orch = await loadOrchestrator({
+      sendMessage: async () => undefined,
+      settings: { maxRecordings: 2 },
+    });
+    await orch.saveRecording(1, captureResult({ startedAt: 100, endedAt: 200 }));
+    await orch.saveRecording(2, captureResult({ startedAt: 300, endedAt: 400 }));
+    await orch.saveRecording(3, captureResult({ startedAt: 500, endedAt: 600 }));
+    const list = await orch.repository.list();
+    expect(list).toHaveLength(2);
+    expect(list.map((r) => r.startedAt)).not.toContain(100);
+  });
+});
+
+describe('Orchestrator.exportRecordingById', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  it('exports an existing recording and errors on a missing id', async () => {
+    const downloads: unknown[] = [];
+    const orch = await loadOrchestrator({
+      sendMessage: async () => undefined,
+      download: async (opts) => {
+        downloads.push(opts);
+        return 1;
+      },
+    });
+    await orch.saveRecording(7, captureResult());
+    const [m] = await orch.repository.list();
+    const ok = await orch.exportRecordingById(m!.id);
+    expect(ok.ok).toBe(true);
+    expect(downloads).toHaveLength(1);
+
+    const missing = await orch.exportRecordingById('does-not-exist');
+    expect(missing.ok).toBe(false);
+  });
+});
+
+describe('Orchestrator: max-duration auto-stop', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  it('auto-stops after maxDurationSec', async () => {
+    const calls: string[] = [];
+    const orch = await loadOrchestrator({
+      settings: { maxDurationSec: 1 },
+      sendMessage: async (_t, msg) => {
+        calls.push(msg.type);
+        if (msg.type === 'CHECK_MEDIA') return { found: true };
+        if (msg.type === 'START_CAPTURE') return { ok: true };
+        if (msg.type === 'STOP_CAPTURE') return { ok: true };
+        return undefined;
+      },
+    });
+    vi.useFakeTimers();
+    try {
+      await orch.startRecording(5);
+      expect(orch.getTabState(5)).toBe('recording');
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(calls).toContain('STOP_CAPTURE');
+      expect(orch.getTabState(5)).toBe('processing');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

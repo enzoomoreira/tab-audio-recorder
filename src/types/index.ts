@@ -100,6 +100,16 @@ export type ManagerToBgMessage =
   | { type: 'GET_BLOB'; payload: { id: string } }
   | { type: 'EXPORT_RECORDING'; payload: { id: string } };
 
+// Test bridge -> Background (E2E builds only; stripped from production)
+export type TestBridgeMessage = { type: 'TEST_START_RECORDING' } | { type: 'TEST_STOP_RECORDING' };
+
+// Everything the background's runtime.onMessage listener can receive.
+export type InboundMessage =
+  | PopupToBgMessage
+  | ManagerToBgMessage
+  | ContentToBgMessage
+  | TestBridgeMessage;
+
 export type TabRecordingState = 'idle' | 'recording' | 'processing';
 
 export type ActionResult = { ok: true } | { ok: false; error: string };

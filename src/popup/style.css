@@ -7,7 +7,10 @@
 }
 
 body {
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
   background: #141414;
   color: #e8e8e8;
   width: 200px;
@@ -51,7 +54,9 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: border-color 0.15s, background 0.15s;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
   outline-offset: 3px;
 }
 
@@ -69,7 +74,9 @@ body {
   height: 26px;
   border-radius: 50%;
   background: #c00;
-  transition: border-radius 0.15s, background 0.15s;
+  transition:
+    border-radius 0.15s,
+    background 0.15s;
   display: block;
 }
 
@@ -123,7 +130,9 @@ body {
   border-radius: 5px;
   padding: 6px 14px;
   cursor: pointer;
-  transition: border-color 0.12s, color 0.12s;
+  transition:
+    border-color 0.12s,
+    color 0.12s;
 }
 
 .manager-btn:hover {
@@ -143,7 +152,9 @@ body {
   align-items: center;
   justify-content: center;
   padding: 0;
-  transition: border-color 0.12s, color 0.12s;
+  transition:
+    border-color 0.12s,
+    color 0.12s;
 }
 
 .icon-btn:hover {

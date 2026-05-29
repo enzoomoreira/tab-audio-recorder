@@ -17,6 +17,15 @@ let debounceHandle: ReturnType<typeof setTimeout>;
 // Object URL cache: tracks URLs created for blobs so we can revoke on delete
 const objectURLs = new Map<string, string>();
 
+// Live players for the currently rendered cards. Destroyed before each rebuild
+// so reloading the list (filter/sort change) doesn't orphan <audio> elements.
+const players: AudioPlayer[] = [];
+
+function destroyPlayers(): void {
+  for (const p of players) p.destroy();
+  players.length = 0;
+}
+
 function debounce(fn: () => void, ms: number): () => void {
   return () => {
     clearTimeout(debounceHandle);
@@ -48,10 +57,27 @@ function formatDate(ts: number): string {
   }).format(new Date(ts));
 }
 
-function escapeHtml(str: string): string {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
+interface ElProps {
+  className?: string;
+  text?: string;
+  title?: string;
+  attrs?: Record<string, string>;
+}
+
+// Builds a DOM node via the structured API (textContent escapes automatically),
+// so the manager never assembles HTML from strings.
+function el<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  props: ElProps = {},
+  children: Node[] = [],
+): HTMLElementTagNameMap[K] {
+  const node = document.createElement(tag);
+  if (props.className) node.className = props.className;
+  if (props.text !== undefined) node.textContent = props.text;
+  if (props.title !== undefined) node.title = props.title;
+  if (props.attrs) for (const [k, v] of Object.entries(props.attrs)) node.setAttribute(k, v);
+  for (const c of children) node.append(c);
+  return node;
 }
 
 async function loadRecordings(): Promise<void> {
@@ -80,12 +106,16 @@ async function loadRecordings(): Promise<void> {
 
   loadingMsg.hidden = true;
 
+  // Tear down players from the previous render before replacing the DOM.
+  destroyPlayers();
+
   if (!recordings.length) {
+    listEl.replaceChildren();
     emptyMsg.hidden = false;
     return;
   }
 
-  listEl.innerHTML = '';
+  listEl.replaceChildren();
   for (const rec of recordings) {
     listEl.appendChild(buildCard(rec));
   }
@@ -93,35 +123,46 @@ async function loadRecordings(): Promise<void> {
 }
 
 function buildCard(meta: RecordingMetadata): HTMLLIElement {
-  const li = document.createElement('li');
-  li.className = 'card';
-  li.dataset['id'] = meta.id;
+  const li = el('li', { className: 'card', attrs: { 'data-id': meta.id } });
 
-  li.innerHTML = `
-    <div class="card__header">
-      <span class="card__host">${escapeHtml(meta.sourceHost)}</span>
-      <span class="card__date">${escapeHtml(formatDate(meta.startedAt))}</span>
-    </div>
-    <div class="card__title" title="${escapeHtml(meta.sourceTitle)}">${escapeHtml(meta.sourceTitle)}</div>
-    <div class="player">
-      <button class="player__btn" aria-label="Play"></button>
-      <div class="player__track">
-        <input type="range" class="player__scrubber" min="0" max="1000" value="0" step="1" aria-label="Seek">
-      </div>
-      <span class="player__time">0:00 / 0:00</span>
-    </div>
-    <div class="card__footer">
-      <span class="card__meta">${formatDuration(meta.durationMs)} &middot; ${formatSize(meta.sizeBytes)} &middot; ${escapeHtml(meta.mimeType.split(';')[0] ?? meta.mimeType)}</span>
-      <div class="card__actions">
-        <button class="btn btn--export" data-action="export">Export</button>
-        <button class="btn btn--danger" data-action="delete">Delete</button>
-      </div>
-    </div>
-  `;
+  const header = el('div', { className: 'card__header' }, [
+    el('span', { className: 'card__host', text: meta.sourceHost }),
+    el('span', { className: 'card__date', text: formatDate(meta.startedAt) }),
+  ]);
 
-  const playerEl = li.querySelector<HTMLElement>('.player')!;
-  const exportBtn = li.querySelector<HTMLButtonElement>('[data-action="export"]')!;
-  const deleteBtn = li.querySelector<HTMLButtonElement>('[data-action="delete"]')!;
+  const title = el('div', {
+    className: 'card__title',
+    title: meta.sourceTitle,
+    text: meta.sourceTitle,
+  });
+
+  const btn = el('button', { className: 'player__btn', attrs: { 'aria-label': 'Play' } });
+  const scrubber = el('input', {
+    className: 'player__scrubber',
+    attrs: { type: 'range', min: '0', max: '1000', value: '0', step: '1', 'aria-label': 'Seek' },
+  });
+  const track = el('div', { className: 'player__track' }, [scrubber]);
+  const time = el('span', { className: 'player__time', text: '0:00 / 0:00' });
+  const playerEl = el('div', { className: 'player' }, [btn, track, time]);
+
+  const codec = meta.mimeType.split(';')[0] ?? meta.mimeType;
+  const metaText = `${formatDuration(meta.durationMs)} · ${formatSize(meta.sizeBytes)} · ${codec}`;
+  const exportBtn = el('button', {
+    className: 'btn btn--export',
+    text: 'Export',
+    attrs: { 'data-action': 'export' },
+  });
+  const deleteBtn = el('button', {
+    className: 'btn btn--danger',
+    text: 'Delete',
+    attrs: { 'data-action': 'delete' },
+  });
+  const footer = el('div', { className: 'card__footer' }, [
+    el('span', { className: 'card__meta', text: metaText }),
+    el('div', { className: 'card__actions' }, [exportBtn, deleteBtn]),
+  ]);
+
+  li.append(header, title, playerEl, footer);
 
   // Fetch blob once, cache the object URL across Play and Export.
   async function ensureObjectURL(): Promise<string | null> {
@@ -140,6 +181,7 @@ function buildCard(meta: RecordingMetadata): HTMLLIElement {
   }
 
   const player = new AudioPlayer(playerEl, meta.durationMs, ensureObjectURL);
+  players.push(player);
 
   exportBtn.addEventListener('click', async () => {
     exportBtn.disabled = true;
@@ -174,6 +216,8 @@ function buildCard(meta: RecordingMetadata): HTMLLIElement {
 
     deleteBtn.disabled = true;
     player.destroy();
+    const idx = players.indexOf(player);
+    if (idx !== -1) players.splice(idx, 1);
 
     const url = objectURLs.get(meta.id);
     if (url) {
@@ -197,6 +241,13 @@ const reloadDebounced = debounce(loadRecordings, 300);
 hostFilterEl.addEventListener('input', reloadDebounced);
 sortFieldEl.addEventListener('change', () => void loadRecordings());
 sortDirEl.addEventListener('change', () => void loadRecordings());
+
+// Release media resources and revoke every cached object URL on unload.
+window.addEventListener('pagehide', () => {
+  destroyPlayers();
+  for (const url of objectURLs.values()) URL.revokeObjectURL(url);
+  objectURLs.clear();
+});
 
 async function init(): Promise<void> {
   const settings = await getSettings();

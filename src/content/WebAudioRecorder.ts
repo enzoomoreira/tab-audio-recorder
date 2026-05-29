@@ -32,6 +32,30 @@ function waitForReply<T>(type: string, timeoutMs = 10_000): Promise<T> {
 
 export class WebAudioRecorder implements IRecorder {
   private recording = false;
+  private errorListener: ((event: MessageEvent) => void) | null = null;
+
+  // Invoked if the page-world recorder errors spontaneously mid-capture.
+  onError: ((reason: string) => void) | null = null;
+
+  private installErrorListener(): void {
+    const handler = (event: MessageEvent): void => {
+      if (event.source !== window) return;
+      const data = event.data as { source?: string; type?: string; error?: string } | null;
+      if (!data || data.source !== TAG_PAGE || data.type !== 'ERROR') return;
+      this.recording = false;
+      this.removeErrorListener();
+      this.onError?.(data.error ?? 'Web Audio capture error');
+    };
+    this.errorListener = handler;
+    window.addEventListener('message', handler);
+  }
+
+  private removeErrorListener(): void {
+    if (this.errorListener) {
+      window.removeEventListener('message', this.errorListener);
+      this.errorListener = null;
+    }
+  }
 
   async probe(): Promise<boolean> {
     postToPage({ type: 'PROBE' });
@@ -48,6 +72,7 @@ export class WebAudioRecorder implements IRecorder {
     const reply = await waitForReply<{ ok: boolean; error?: string }>('STARTED');
     if (!reply.ok) throw new Error(reply.error ?? 'Failed to start Web Audio capture');
     this.recording = true;
+    this.installErrorListener();
     logger.info('Web Audio capture started, bitrate:', bitrate);
   }
 
@@ -55,10 +80,18 @@ export class WebAudioRecorder implements IRecorder {
     if (!this.recording) throw new Error('Not recording');
     postToPage({ type: 'STOP' });
     type StopReply =
-      | { ok: true; blob: Blob; mimeType: string; durationMs: number; startedAt: number; endedAt: number }
+      | {
+          ok: true;
+          blob: Blob;
+          mimeType: string;
+          durationMs: number;
+          startedAt: number;
+          endedAt: number;
+        }
       | { ok: false; error: string };
     const reply = await waitForReply<StopReply>('STOPPED');
     this.recording = false;
+    this.removeErrorListener();
     if (!reply.ok) throw new Error(reply.error);
     logger.info('Web Audio capture stopped, blob:', reply.blob.size, 'bytes');
     return {

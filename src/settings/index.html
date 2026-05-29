@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -26,6 +26,16 @@
               (e.g. radio.garden) are recorded at source quality regardless.
             </p>
           </div>
+
+          <div class="field">
+            <label for="maxDurationSec">Max recording length (seconds)</label>
+            <input type="number" id="maxDurationSec" class="input input--small" min="0" step="1" />
+            <p class="field__hint">
+              0 = unlimited. Recordings are held in memory until you stop them, so a cap protects
+              against runaway memory use on long streams. The recording auto-stops and is saved when
+              the limit is reached.
+            </p>
+          </div>
         </section>
 
         <!-- Export -->
@@ -34,7 +44,12 @@
 
           <div class="field">
             <label for="exportSubfolder">Subfolder within Downloads</label>
-            <input type="text" id="exportSubfolder" class="input" placeholder="(leave empty for Downloads root)" />
+            <input
+              type="text"
+              id="exportSubfolder"
+              class="input"
+              placeholder="(leave empty for Downloads root)"
+            />
             <p class="field__hint">
               Files are saved to <code>Downloads/&lt;subfolder&gt;/</code>. Cannot escape the
               Downloads directory (browser security).
@@ -89,8 +104,8 @@
             <label for="maxRecordings">Max recordings (auto-cleanup)</label>
             <input type="number" id="maxRecordings" class="input input--small" min="0" step="1" />
             <p class="field__hint">
-              0 = unlimited. Otherwise, the oldest recordings are deleted after each save
-              to keep total at or below this number.
+              0 = unlimited. Otherwise, the oldest recordings are deleted after each save to keep
+              total at or below this number.
             </p>
           </div>
         </section>

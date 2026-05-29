@@ -18,6 +18,9 @@ export class NetworkRecorder implements INetworkRecorder {
   private mimeType = 'audio/mpeg';
   private startedAt = 0;
 
+  // Invoked if the stream fetch fails mid-capture (not via stop()).
+  onError: ((reason: string) => void) | null = null;
+
   start(url: string): void {
     if (this.controller) throw new Error('Already recording');
 
@@ -36,6 +39,7 @@ export class NetworkRecorder implements INetworkRecorder {
       const res = await fetch(url, { signal });
       if (!res.ok || !res.body) {
         logger.error('Fetch failed:', res.status, res.statusText);
+        this.onError?.(`Stream fetch failed: ${res.status} ${res.statusText}`);
         return;
       }
 
@@ -54,7 +58,9 @@ export class NetworkRecorder implements INetworkRecorder {
       if (err instanceof Error && err.name === 'AbortError') {
         logger.debug('Fetch aborted (normal stop)');
       } else {
-        logger.error('Stream error:', err);
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error('Stream error:', msg);
+        this.onError?.(`Stream error: ${msg}`);
       }
     }
   }

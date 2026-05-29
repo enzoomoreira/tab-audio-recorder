@@ -14,6 +14,7 @@ const logger = createLogger('Settings');
 
 // --- DOM refs ---
 const bitrateEl = document.getElementById('bitrate') as HTMLSelectElement;
+const maxDurationSecEl = document.getElementById('maxDurationSec') as HTMLInputElement;
 const exportSubfolderEl = document.getElementById('exportSubfolder') as HTMLInputElement;
 const autoExportEl = document.getElementById('autoExport') as HTMLInputElement;
 const filenameTemplateEl = document.getElementById('filenameTemplate') as HTMLInputElement;
@@ -54,6 +55,7 @@ function populateBitrateOptions(): void {
 
 function applyToForm(s: Settings): void {
   bitrateEl.value = String(s.bitrate);
+  maxDurationSecEl.value = String(s.maxDurationSec);
   exportSubfolderEl.value = s.exportSubfolder;
   autoExportEl.checked = s.autoExport;
   filenameTemplateEl.value = s.filenameTemplate;
@@ -67,6 +69,7 @@ function applyToForm(s: Settings): void {
 function readForm(): Settings {
   return {
     bitrate: Number(bitrateEl.value),
+    maxDurationSec: Math.max(0, Number(maxDurationSecEl.value) || 0),
     exportSubfolder: exportSubfolderEl.value.trim(),
     autoExport: autoExportEl.checked,
     filenameTemplate: filenameTemplateEl.value,
@@ -125,6 +128,7 @@ function bindEvents(): void {
   // Change events: any input/select/checkbox flush
   const flushOnChange = [
     bitrateEl,
+    maxDurationSecEl,
     exportSubfolderEl,
     autoExportEl,
     defaultSortFieldEl,

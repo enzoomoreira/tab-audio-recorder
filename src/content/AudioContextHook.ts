@@ -120,7 +120,12 @@
   }
 
   function pickMimeType(): string {
-    const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/ogg'];
+    const candidates = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/ogg;codecs=opus',
+      'audio/ogg',
+    ];
     for (const m of candidates) {
       if (MediaRecorder.isTypeSupported(m)) return m;
     }
@@ -162,6 +167,14 @@
         activeRecorder.ondataavailable = (ev) => {
           if (ev.data.size > 0) chunks.push(ev.data);
         };
+        // Spontaneous mid-capture failures. The STOP handler installs its own
+        // onerror, so this only fires while actively recording.
+        activeRecorder.onerror = (ev) => {
+          const err = (ev as Event & { error?: { message?: string } }).error;
+          activeRecorder = null;
+          chunks = [];
+          reply({ type: 'ERROR', error: `MediaRecorder error: ${err?.message ?? 'unknown'}` });
+        };
         startedAt = Date.now();
         activeRecorder.start(1000);
         reply({ type: 'STARTED', ok: true });
@@ -198,7 +211,11 @@
         activeRecorder = null;
         chunks = [];
         const err = (ev as Event & { error?: { message?: string } }).error;
-        reply({ type: 'STOPPED', ok: false, error: `MediaRecorder error: ${err?.message ?? 'unknown'}` });
+        reply({
+          type: 'STOPPED',
+          ok: false,
+          error: `MediaRecorder error: ${err?.message ?? 'unknown'}`,
+        });
       };
       rec.stop();
       return;

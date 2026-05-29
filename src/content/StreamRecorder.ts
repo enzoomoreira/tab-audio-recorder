@@ -21,7 +21,8 @@ function pickMimeType(): string {
 
 function captureStream(element: HTMLMediaElement): MediaStream {
   // Firefox Xray wrapper workaround: try wrappedJSObject first, then direct.
-  const el = (element as unknown as { wrappedJSObject?: HTMLMediaElement }).wrappedJSObject ?? element;
+  const el =
+    (element as unknown as { wrappedJSObject?: HTMLMediaElement }).wrappedJSObject ?? element;
 
   type WithCapture = { captureStream: () => MediaStream };
   type WithMozCapture = { mozCaptureStream: () => MediaStream };
@@ -51,6 +52,9 @@ export class StreamRecorder implements IStreamRecorder {
   private mimeType = '';
   private startedAt = 0;
 
+  // Invoked if the recorder errors spontaneously mid-capture (not via stop()).
+  onError: ((reason: string) => void) | null = null;
+
   start(element: HTMLMediaElement, bitrate: number): void {
     if (this.recorder) {
       throw new Error('Already recording');
@@ -77,6 +81,16 @@ export class StreamRecorder implements IStreamRecorder {
 
     this.recorder.ondataavailable = (event) => {
       if (event.data.size > 0) this.chunks.push(event.data);
+    };
+
+    // Surface mid-capture failures. stop() replaces this handler with its own
+    // reject path, so this only fires for spontaneous errors while recording.
+    this.recorder.onerror = (event) => {
+      const msg = event.error?.message ?? 'unknown';
+      logger.error('MediaRecorder error during capture:', msg);
+      this.recorder = null;
+      this.chunks = [];
+      this.onError?.(`MediaRecorder error: ${msg}`);
     };
 
     this.recorder.start(1000);

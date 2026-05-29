@@ -22,7 +22,11 @@ function meta(id: string, overrides: Partial<RecordingMetadata> = {}): Recording
   };
 }
 
-function rec(id: string, overrides: Partial<RecordingMetadata> = {}, body = 'audio-data'): Recording {
+function rec(
+  id: string,
+  overrides: Partial<RecordingMetadata> = {},
+  body = 'audio-data',
+): Recording {
   return {
     metadata: meta(id, overrides),
     blob: new Blob([body], { type: 'audio/webm' }),

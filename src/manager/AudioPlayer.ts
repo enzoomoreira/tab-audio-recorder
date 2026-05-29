@@ -1,15 +1,46 @@
-const SVG_PLAY = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 12 12" fill="currentColor">
-  <path d="M2 1.5l9 4.5-9 4.5V1.5z"/>
-</svg>`;
+// Icons are built as real SVG nodes (not innerHTML) to avoid any HTML-string
+// assignment surface and keep the AMO validator clean.
+const SVG_NS = 'http://www.w3.org/2000/svg';
 
-const SVG_PAUSE = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 12 12" fill="currentColor">
-  <rect x="2" y="1" width="3" height="10" rx="1"/>
-  <rect x="7" y="1" width="3" height="10" rx="1"/>
-</svg>`;
+function svgEl<K extends keyof SVGElementTagNameMap>(
+  tag: K,
+  attrs: Record<string, string>,
+): SVGElementTagNameMap[K] {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  return el;
+}
 
-const SVG_SPINNER = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round">
-  <path d="M12 3 a9 9 0 0 1 9 9"/>
-</svg>`;
+function icon(
+  viewBox: string,
+  rootAttrs: Record<string, string>,
+  children: SVGElement[],
+): SVGSVGElement {
+  const svg = svgEl('svg', { width: '14', height: '14', viewBox, ...rootAttrs });
+  for (const c of children) svg.appendChild(c);
+  return svg;
+}
+
+function playIcon(): SVGSVGElement {
+  return icon('0 0 12 12', { fill: 'currentColor' }, [
+    svgEl('path', { d: 'M2 1.5l9 4.5-9 4.5V1.5z' }),
+  ]);
+}
+
+function pauseIcon(): SVGSVGElement {
+  return icon('0 0 12 12', { fill: 'currentColor' }, [
+    svgEl('rect', { x: '2', y: '1', width: '3', height: '10', rx: '1' }),
+    svgEl('rect', { x: '7', y: '1', width: '3', height: '10', rx: '1' }),
+  ]);
+}
+
+function spinnerIcon(): SVGSVGElement {
+  return icon(
+    '0 0 24 24',
+    { fill: 'none', stroke: 'currentColor', 'stroke-width': '3', 'stroke-linecap': 'round' },
+    [svgEl('path', { d: 'M12 3 a9 9 0 0 1 9 9' })],
+  );
+}
 
 function fmtSec(sec: number): string {
   if (!isFinite(sec) || sec < 0) return '0:00';
@@ -48,7 +79,7 @@ export class AudioPlayer {
     this.scrubber = container.querySelector<HTMLInputElement>('.player__scrubber')!;
     this.timeEl = container.querySelector<HTMLSpanElement>('.player__time')!;
 
-    this.btn.innerHTML = SVG_PLAY;
+    this.btn.replaceChildren(playIcon());
     this.setTime(0, this.knownDurationSec);
 
     this.bindAudioEvents();
@@ -78,8 +109,12 @@ export class AudioPlayer {
   private bindUiEvents(): void {
     this.btn.addEventListener('click', () => void this.handleToggle());
 
-    this.scrubber.addEventListener('mousedown', () => { this.scrubbing = true; });
-    this.scrubber.addEventListener('touchstart', () => { this.scrubbing = true; });
+    this.scrubber.addEventListener('mousedown', () => {
+      this.scrubbing = true;
+    });
+    this.scrubber.addEventListener('touchstart', () => {
+      this.scrubbing = true;
+    });
     this.scrubber.addEventListener('input', () => this.previewScrub());
     this.scrubber.addEventListener('change', () => void this.commitScrub());
   }
@@ -109,7 +144,7 @@ export class AudioPlayer {
 
   private async doLoad(): Promise<boolean> {
     this.btn.disabled = true;
-    this.btn.innerHTML = SVG_SPINNER;
+    this.btn.replaceChildren(spinnerIcon());
     this.btn.classList.add('player__btn--loading');
 
     try {
@@ -150,12 +185,12 @@ export class AudioPlayer {
   }
 
   private renderPlaying(): void {
-    this.btn.innerHTML = SVG_PAUSE;
+    this.btn.replaceChildren(pauseIcon());
     this.btn.setAttribute('aria-label', 'Pause');
   }
 
   private renderPaused(): void {
-    this.btn.innerHTML = SVG_PLAY;
+    this.btn.replaceChildren(playIcon());
     this.btn.setAttribute('aria-label', 'Play');
   }
 

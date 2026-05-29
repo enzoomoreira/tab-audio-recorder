@@ -19,7 +19,9 @@ describe('E2E smoke', () => {
 
   it('static server serves test-pages and Firefox loads them', async () => {
     await ctx.driver.get(`${server.url}/00-smoke.html`);
-    const loaded = await ctx.driver.executeScript<boolean | null>('return window.__smokeLoaded ?? null');
+    const loaded = await ctx.driver.executeScript<boolean | null>(
+      'return window.__smokeLoaded ?? null',
+    );
     expect(loaded).toBe(true);
   }, 30_000);
 

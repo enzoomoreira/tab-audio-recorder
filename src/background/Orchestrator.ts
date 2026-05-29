@@ -2,6 +2,7 @@ import { IndexedDBRepository } from '../shared/Repository';
 import { createLogger } from '../shared/Logger';
 import { getSettings } from '../shared/Settings';
 import { applyTemplate } from '../shared/FilenameTemplate';
+import { SessionState } from '../shared/SessionState';
 import type {
   TabRecordingState,
   RecordingMetadata,
@@ -14,37 +15,85 @@ const logger = createLogger('Orchestrator');
 
 export const repository = new IndexedDBRepository();
 
-const tabStates = new Map<number, TabRecordingState>();
+// Per-tab recording state, persisted to storage.session so it survives a
+// background suspension (Firefox MV3 background is non-persistent).
+const session = new SessionState();
 
-// One recording per tab, but the active source can be in any frame (top or iframe).
-// activeFrames tracks which frameId is currently recording so STOP routes correctly.
-const activeFrames = new Map<number, number>();
+// Safety net: if a tab enters 'processing' (stop acknowledged) but the
+// RECORDING_COMPLETE message never arrives, reset it so the UI can't stay stuck.
+// Timers are not persisted; hydrate() re-arms them.
+const PROCESSING_TIMEOUT_MS = 30_000;
+const processingTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
-// Network stream URLs are keyed per-frame because the iframe that initiated the
-// audio request is the one that must fetch the stream.
-const tabStreamURLs = new Map<number, Map<number, string>>();
+// Optional cap on recording length (memory guard). Auto-stops via the normal
+// STOP path, so it works uniformly across every capture strategy.
+const maxDurationTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
 function generateId(): string {
   return `rec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 export function getTabState(tabId: number): TabRecordingState {
-  return tabStates.get(tabId) ?? 'idle';
+  return session.state(tabId);
 }
 
-export function onTabRemoved(tabId: number): void {
-  tabStates.delete(tabId);
-  activeFrames.delete(tabId);
-  tabStreamURLs.delete(tabId);
+/** Restore state after a background wake and re-arm watchdogs for stuck tabs. */
+export async function hydrate(): Promise<void> {
+  await session.hydrate();
+  for (const tabId of session.tabsInState('processing')) {
+    armProcessingWatchdog(tabId);
+  }
+}
+
+/** Drop all per-tab state and cancel any pending timers. */
+export function clearTab(tabId: number): void {
+  session.clear(tabId);
+  clearProcessingWatchdog(tabId);
+  clearMaxDuration(tabId);
+}
+
+function armMaxDuration(tabId: number, seconds: number): void {
+  clearMaxDuration(tabId);
+  const timer = setTimeout(() => {
+    maxDurationTimers.delete(tabId);
+    if (session.state(tabId) === 'recording') {
+      logger.info('Max duration reached for tab', tabId, '- auto-stopping');
+      void stopRecording(tabId);
+    }
+  }, seconds * 1000);
+  maxDurationTimers.set(tabId, timer);
+}
+
+function clearMaxDuration(tabId: number): void {
+  const timer = maxDurationTimers.get(tabId);
+  if (timer !== undefined) {
+    clearTimeout(timer);
+    maxDurationTimers.delete(tabId);
+  }
+}
+
+function armProcessingWatchdog(tabId: number): void {
+  clearProcessingWatchdog(tabId);
+  const timer = setTimeout(() => {
+    processingTimers.delete(tabId);
+    if (session.state(tabId) === 'processing') {
+      logger.warn('Processing watchdog fired for tab', tabId, '- resetting to idle');
+      clearTab(tabId);
+    }
+  }, PROCESSING_TIMEOUT_MS);
+  processingTimers.set(tabId, timer);
+}
+
+function clearProcessingWatchdog(tabId: number): void {
+  const timer = processingTimers.get(tabId);
+  if (timer !== undefined) {
+    clearTimeout(timer);
+    processingTimers.delete(tabId);
+  }
 }
 
 export function onMediaURLDetected(tabId: number, frameId: number, url: string): void {
-  let perFrame = tabStreamURLs.get(tabId);
-  if (!perFrame) {
-    perFrame = new Map<number, string>();
-    tabStreamURLs.set(tabId, perFrame);
-  }
-  perFrame.set(frameId, url);
+  session.addStreamURL(tabId, frameId, url);
   logger.debug('Stream URL cached for tab', tabId, 'frame', frameId, url);
 }
 
@@ -77,7 +126,7 @@ async function findFrameWithMedia(tabId: number): Promise<number | null> {
 }
 
 function findFrameWithStreamURL(tabId: number): { frameId: number; url: string } | null {
-  const perFrame = tabStreamURLs.get(tabId);
+  const perFrame = session.streamURLs(tabId);
   if (!perFrame) return null;
   // Prefer top frame (frameId 0) if it has a stream; else first available.
   const sorted = [...perFrame.entries()].sort(([a], [b]) => a - b);
@@ -85,8 +134,14 @@ function findFrameWithStreamURL(tabId: number): { frameId: number; url: string }
   return first ? { frameId: first[0], url: first[1] } : null;
 }
 
+function markRecording(tabId: number, frameId: number, maxDurationSec: number): void {
+  session.setActiveFrame(tabId, frameId);
+  session.setState(tabId, 'recording');
+  if (maxDurationSec > 0) armMaxDuration(tabId, maxDurationSec);
+}
+
 export async function startRecording(tabId: number): Promise<ActionResult> {
-  if (tabStates.get(tabId) === 'recording') {
+  if (session.state(tabId) === 'recording') {
     return { ok: false, error: 'Already recording this tab' };
   }
 
@@ -110,9 +165,15 @@ export async function startRecording(tabId: number): Promise<ActionResult> {
       .catch(() => undefined);
 
     if (result?.ok) {
-      tabStates.set(tabId, 'recording');
-      activeFrames.set(tabId, mediaFrameId);
-      logger.info('Recording started (DOM) tab', tabId, 'frame', mediaFrameId, 'bitrate:', settings.bitrate);
+      markRecording(tabId, mediaFrameId, settings.maxDurationSec);
+      logger.info(
+        'Recording started (DOM) tab',
+        tabId,
+        'frame',
+        mediaFrameId,
+        'bitrate:',
+        settings.bitrate,
+      );
       return { ok: true };
     }
     if (result && !result.ok) {
@@ -133,8 +194,7 @@ export async function startRecording(tabId: number): Promise<ActionResult> {
       .catch(() => undefined);
 
     if (netResult?.ok) {
-      tabStates.set(tabId, 'recording');
-      activeFrames.set(tabId, stream.frameId);
+      markRecording(tabId, stream.frameId, settings.maxDurationSec);
       logger.info(
         'Recording started (network fetch) tab',
         tabId,
@@ -159,8 +219,7 @@ export async function startRecording(tabId: number): Promise<ActionResult> {
       )
       .catch(() => undefined);
     if (reply?.ok) {
-      tabStates.set(tabId, 'recording');
-      activeFrames.set(tabId, frameId);
+      markRecording(tabId, frameId, settings.maxDurationSec);
       logger.info('Recording started (Web Audio) tab', tabId, 'frame', frameId);
       return { ok: true };
     }
@@ -176,32 +235,36 @@ export async function startRecording(tabId: number): Promise<ActionResult> {
 }
 
 export async function stopRecording(tabId: number): Promise<ActionResult> {
-  if (tabStates.get(tabId) !== 'recording') {
+  if (session.state(tabId) !== 'recording') {
     return { ok: false, error: 'Not recording this tab' };
   }
 
-  const frameId = activeFrames.get(tabId);
+  const frameId = session.activeFrame(tabId);
   if (frameId === undefined) {
-    tabStates.delete(tabId);
+    clearTab(tabId);
     return { ok: false, error: 'No active recording frame' };
   }
 
-  tabStates.set(tabId, 'processing');
+  session.setState(tabId, 'processing');
 
   const result: { ok: boolean; error?: string } | undefined = await browser.tabs
     .sendMessage(tabId, { type: 'STOP_CAPTURE' }, { frameId })
     .catch(() => undefined);
 
   if (!result?.ok) {
-    tabStates.delete(tabId);
-    activeFrames.delete(tabId);
+    clearTab(tabId);
     return { ok: false, error: result?.error ?? 'Failed to stop capture' };
   }
 
+  // Stop acknowledged; the recording is now being assembled and will arrive via
+  // RECORDING_COMPLETE. Guard against that message never landing.
+  armProcessingWatchdog(tabId);
   return { ok: true };
 }
 
 export async function saveRecording(tabId: number, result: CaptureResult): Promise<void> {
+  clearProcessingWatchdog(tabId);
+
   let url = 'unknown';
   let title = 'Unknown';
   let host = 'unknown';
@@ -228,22 +291,34 @@ export async function saveRecording(tabId: number, result: CaptureResult): Promi
   };
 
   const recording: Recording = { metadata, blob: result.blob };
-  await repository.save(recording);
-  tabStates.delete(tabId);
-  activeFrames.delete(tabId);
-  logger.info('Saved recording', metadata.id, 'from', host);
 
-  const settings = await getSettings();
+  try {
+    await repository.save(recording);
+    logger.info('Saved recording', metadata.id, 'from', host);
 
-  if (settings.autoExport) {
-    const exportResult = await exportRecording(recording);
-    if (!exportResult.ok) {
-      logger.warn('Auto-export failed for', metadata.id, ':', exportResult.error);
+    const settings = await getSettings();
+
+    if (settings.autoExport) {
+      const exportResult = await exportRecording(recording);
+      if (!exportResult.ok) {
+        logger.warn('Auto-export failed for', metadata.id, ':', exportResult.error);
+      }
     }
-  }
 
-  if (settings.maxRecordings > 0) {
-    await pruneOldRecordings(settings.maxRecordings);
+    if (settings.maxRecordings > 0) {
+      await pruneOldRecordings(settings.maxRecordings);
+    }
+  } catch (err) {
+    const quota = err instanceof DOMException && err.name === 'QuotaExceededError';
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error(
+      quota
+        ? `Save failed: storage quota exceeded (${(metadata.sizeBytes / 1024 / 1024).toFixed(1)} MB). Delete old recordings or lower the bitrate.`
+        : `Save failed for tab ${tabId}: ${msg}`,
+    );
+  } finally {
+    // Always release the tab, even on save failure, so it can't stay stuck.
+    clearTab(tabId);
   }
 }
 
@@ -274,7 +349,9 @@ export async function exportRecording(recording: Recording): Promise<ActionResul
       return { ok: false, error: 'Download did not start' };
     }
 
-    type DownloadDelta = Parameters<Parameters<typeof browser.downloads.onChanged.addListener>[0]>[0];
+    type DownloadDelta = Parameters<
+      Parameters<typeof browser.downloads.onChanged.addListener>[0]
+    >[0];
     const onChanged = (delta: DownloadDelta): void => {
       if (delta.id !== downloadId) return;
       const state = delta.state?.current;

@@ -1,4 +1,10 @@
-import type { IRepository, Recording, RecordingMetadata, RecordingFilter, SortOptions } from '../types';
+import type {
+  IRepository,
+  Recording,
+  RecordingMetadata,
+  RecordingFilter,
+  SortOptions,
+} from '../types';
 import { createLogger } from './Logger';
 
 const DB_NAME = 'tab-audio-recorder';
