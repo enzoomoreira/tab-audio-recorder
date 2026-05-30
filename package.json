@@ -30,12 +30,12 @@
   "license": "ISC",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/YOUR-USERNAME/tab-audio-recorder.git"
+    "url": "git+https://github.com/enzoomoreira/tab-audio-recorder.git"
   },
   "bugs": {
-    "url": "https://github.com/YOUR-USERNAME/tab-audio-recorder/issues"
+    "url": "https://github.com/enzoomoreira/tab-audio-recorder/issues"
   },
-  "homepage": "https://github.com/YOUR-USERNAME/tab-audio-recorder#readme",
+  "homepage": "https://github.com/enzoomoreira/tab-audio-recorder#readme",
   "engines": {
     "bun": ">=1.0.0"
   },

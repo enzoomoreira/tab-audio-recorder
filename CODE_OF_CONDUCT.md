@@ -11,7 +11,7 @@ respectfully and in good faith.
 ## Reporting
 
 Concerns may be reported privately through the repository's **Security** tab
-([Report a vulnerability](https://github.com/YOUR-USERNAME/tab-audio-recorder/security/advisories/new),
+([Report a vulnerability](https://github.com/enzoomoreira/tab-audio-recorder/security/advisories/new),
 which doubles as a private contact channel), or by opening an issue for
 non-sensitive matters. All reports are reviewed promptly and fairly, and the
 reporter's privacy is respected.
