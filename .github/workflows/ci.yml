@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    name: Lint, typecheck, unit, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+      - run: bunx tsc --noEmit
+      - run: bun run test
+      - run: bun run build
+      - run: bun run lint:ext # AMO validator over dist/
+
+  e2e:
+    name: End-to-end (Selenium + Firefox)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: browser-actions/setup-firefox@v1
+      - run: bun install --frozen-lockfile
+      # The fixture launches Firefox headed; xvfb provides a virtual display.
+      # geckodriver is the npm dev dependency. globalSetup reaps leaked processes.
+      - run: xvfb-run -a bun run test:e2e

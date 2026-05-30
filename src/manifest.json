@@ -10,7 +10,7 @@
   },
   "browser_specific_settings": {
     "gecko": {
-      "id": "tab-audio-recorder@test",
+      "id": "{7f9db6f3-3bfb-413b-b898-17f20d09e4df}",
       "data_collection_permissions": {
         "required": ["none"]
       }

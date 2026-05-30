@@ -16,9 +16,29 @@
     "test:watch": "vitest",
     "test:e2e": "VITE_TEST_BRIDGE=true bun run build && vitest run --config vitest.e2e.config.ts"
   },
-  "keywords": [],
+  "keywords": [
+    "firefox",
+    "extension",
+    "webextension",
+    "manifest-v3",
+    "audio",
+    "recording",
+    "tab-audio",
+    "mediarecorder"
+  ],
   "author": "Enzo Moreira <moreira.enzo@yahoo.com.br>",
   "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YOUR-USERNAME/tab-audio-recorder.git"
+  },
+  "bugs": {
+    "url": "https://github.com/YOUR-USERNAME/tab-audio-recorder/issues"
+  },
+  "homepage": "https://github.com/YOUR-USERNAME/tab-audio-recorder#readme",
+  "engines": {
+    "bun": ">=1.0.0"
+  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/firefox-webext-browser": "^143.0.0",
