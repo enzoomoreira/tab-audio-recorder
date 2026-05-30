@@ -90,12 +90,12 @@ recordBtn.addEventListener('click', async () => {
 });
 
 managerBtn.addEventListener('click', () => {
-  void browser.runtime.sendMessage({ type: 'OPEN_MANAGER' });
+  void browser.runtime.sendMessage({ type: 'OPEN_APP', payload: { section: 'recordings' } });
   window.close();
 });
 
 settingsBtn.addEventListener('click', () => {
-  void browser.runtime.openOptionsPage();
+  void browser.runtime.sendMessage({ type: 'OPEN_APP', payload: { section: 'settings' } });
   window.close();
 });
 

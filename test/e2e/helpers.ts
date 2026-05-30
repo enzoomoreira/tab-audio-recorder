@@ -41,7 +41,7 @@ export async function waitForRecording(
 
   while (Date.now() - start < timeoutMs) {
     // Use a tiny inline reader inside the extension origin so IDB resolves to the extension's store.
-    await driver.get(`${baseUrl}/manager/index.html`);
+    await driver.get(`${baseUrl}/app/index.html`);
     // The manager UI reads via runtime messaging; give it a moment to populate.
     const result = await driver.executeScript<{
       count: number;
@@ -81,7 +81,7 @@ export async function waitForFailedRecording(
   const start = Date.now();
 
   while (Date.now() - start < timeoutMs) {
-    await driver.get(`${baseUrl}/manager/index.html`);
+    await driver.get(`${baseUrl}/app/index.html`);
     const result = await driver.executeScript<{ count: number }>(
       `return new Promise(async (resolve) => {
         const list = await browser.runtime.sendMessage({ type: 'LIST_RECORDINGS', payload: {} });
@@ -112,7 +112,7 @@ export async function waitForFailedRecording(
 export async function getBackgroundLogs(driver: WebDriver): Promise<string[]> {
   try {
     const baseUrl = await extensionBaseUrl(driver);
-    await driver.get(`${baseUrl}/manager/index.html`);
+    await driver.get(`${baseUrl}/app/index.html`);
     const result = await driver.executeScript<string[]>(
       `return new Promise(async (resolve) => {
         try {
@@ -155,7 +155,7 @@ export async function dumpDiagnostics(driver: WebDriver, label: string): Promise
 /** Delete all recordings via the runtime API (cleanup between tests). */
 export async function clearRecordings(driver: WebDriver): Promise<void> {
   const baseUrl = await extensionBaseUrl(driver);
-  await driver.get(`${baseUrl}/manager/index.html`);
+  await driver.get(`${baseUrl}/app/index.html`);
   await driver.executeScript(
     `return new Promise(async (resolve) => {
       const list = await browser.runtime.sendMessage({ type: 'LIST_RECORDINGS', payload: {} });

@@ -8,7 +8,7 @@ import {
 } from '../shared/Settings';
 import { applyTemplate, validateTemplate } from '../shared/FilenameTemplate';
 import { FORMAT_META, EXPORT_FORMATS } from '../shared/exportFormats';
-import { createLogger, setVerbose } from '../shared/Logger';
+import { createLogger } from '../shared/Logger';
 import type { RecordingMetadata, SortField, SortDirection, ExportFormat } from '../types';
 
 const logger = createLogger('Settings');
@@ -179,14 +179,10 @@ function bindEvents(): void {
   });
 }
 
-async function init(): Promise<void> {
-  const settings = await getSettings();
-  setVerbose(settings.verboseLogging);
+export function initSettings(settings: Settings): void {
   populateBitrateOptions();
   populateExportFormatOptions();
   applyToForm(settings);
   bindEvents();
-  logger.info('Settings page initialized');
+  logger.info('Settings section initialized');
 }
-
-void init();

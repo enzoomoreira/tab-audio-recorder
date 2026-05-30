@@ -80,7 +80,9 @@ a WebExtension:
   `NetworkRecorder`, `WebAudioRecorder`) plus their `document_start` MAIN-world
   hooks `MediaElementHook` (taps played media elements, including detached ones)
   and `AudioContextHook` (Web Audio tap).
-- `src/manager/`, `src/popup/`, `src/settings/` — the three UI surfaces.
+- `src/popup/`, `src/app/` — the two UI surfaces. `app/` is the unified
+  recordings + settings tab (a hash-routed SPA with a sidebar); the popup is the
+  toolbar button.
 - `src/shared/` — `Repository` (IndexedDB), `Settings`, `Logger`,
   `FilenameTemplate`, `SessionState`, `AudioEncoder` (WAV/MP3 transcode).
 - `src/types/` — the domain model and the discriminated-union message bus.

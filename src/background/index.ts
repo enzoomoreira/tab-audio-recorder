@@ -15,9 +15,31 @@ import {
 } from './Orchestrator';
 import { createLogger, setVerbose, getLogBuffer } from '../shared/Logger';
 import { getSettings, onSettingsChanged } from '../shared/Settings';
-import type { InboundMessage } from '../types';
+import type { InboundMessage, AppSection } from '../types';
 
 const logger = createLogger('Background');
+
+// Open the unified app page deep-linked to a section. Find-or-focus: if a tab is
+// already on the app page, focus it and just re-target the section via the hash
+// (a fragment-only change never reloads the page — the SPA's hashchange listener
+// swaps sections). Otherwise open a fresh tab. Keeps the popup's two buttons from
+// ever spawning duplicate copies of the same page.
+async function openApp(section: AppSection): Promise<void> {
+  const base = browser.runtime.getURL('app/index.html');
+  const target = `${base}#${section}`;
+
+  const tabs = await browser.tabs.query({});
+  const existing = tabs.find((t) => t.url === base || t.url?.startsWith(`${base}#`));
+
+  if (existing?.id != null) {
+    await browser.tabs.update(existing.id, { active: true, url: target });
+    if (existing.windowId != null) {
+      await browser.windows.update(existing.windowId, { focused: true });
+    }
+    return;
+  }
+  await browser.tabs.create({ url: target });
+}
 
 // --- Boot: rehydrate state (survives MV3 suspension), load settings ---
 void (async () => {
@@ -44,8 +66,8 @@ browser.runtime.onMessage.addListener(
       case 'TOGGLE_RECORDING':
         return toggleRecording(message.payload.tabId);
 
-      case 'OPEN_MANAGER':
-        void browser.tabs.create({ url: browser.runtime.getURL('manager/index.html') });
+      case 'OPEN_APP':
+        void openApp(message.payload.section);
         return undefined;
 
       // --- Content script ---

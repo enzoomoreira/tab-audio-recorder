@@ -29,9 +29,9 @@ To load manually instead of `web-ext`: open `about:debugging#/runtime/this-firef
 
 - `root: 'src'`, output to `../dist`, emptied each build.
 - The plugin reads `src/manifest.json`, bundles `background`, the two content
-  scripts, and the HTML entry points. `manager/index.html` and
-  `settings/index.html` are listed as `additionalInputs` because they are not
-  reachable from the manifest's `action`/`options_ui` crawl alone.
+  scripts, and the HTML entry points. `app/index.html` is listed as an
+  `additionalInput` because the crawl of the manifest's `action`/`options_ui`
+  does not reach it reliably on its own.
 - `target: 'firefox'` — the plugin emits an MV3 manifest shaped for Gecko.
 
 ### The `__TEST_BRIDGE__` flag
@@ -103,9 +103,17 @@ bun run test:e2e     # builds with the bridge, then runs the Selenium suite
   (`startRecording`/`stopRecording`/`armRecording` dispatch the custom event;
   `stopRecording` then waits a short settle window so the save lands before any
   navigation tears the recorder down) and asserts results by reading IndexedDB
-  through the manager's runtime messaging. On a failed test, `dumpDiagnostics`
+  through the app page's runtime messaging. On a failed test, `dumpDiagnostics`
   saves a screenshot to `e2e-artifacts/` and prints the background log buffer
-  (via `TEST_GET_LOGS`) so a red test shows *why*, not just "got null".
+  (via `TEST_GET_LOGS`) so a red test shows _why_, not just "got null".
+- `test/e2e/globalSetup.ts` reaps leaked browser processes after the run. On
+  Windows, selenium's `driver.quit()` does not reliably kill the geckodriver child
+  (mozilla/geckodriver#1220); orphans accumulate and make a later run hang in
+  `Builder.build()`. The hook snapshots geckodriver/firefox PIDs before the suite
+  and kills only the ones it started, so `bun run test:e2e` self-cleans for any
+  dev. (It cannot run if vitest is hard-killed with Ctrl-C — then clear leftovers
+  manually.) A full run takes ~95s (10 capture cases × up to 60s each); that is
+  normal, not a freeze.
 
 The `test-pages/` fixtures map one-to-one onto capture paths — see the
 [strategy/test-page map](capture.md#strategy-and-e2e-test-page-map).
@@ -163,9 +171,9 @@ each common change. File paths are the source of truth; line numbers drift.
 
 1. **Model** — add the field to the `Settings` interface and `DEFAULT_SETTINGS`
    in `src/shared/Settings.ts`. `merge()` makes it backward-compatible automatically.
-2. **Settings UI** — add the control to `src/settings/index.html`, a DOM ref and
-   read/write wiring in `src/settings/index.ts` (`applyToForm` + `readForm`), and
-   the change listener in `bindEvents`.
+2. **Settings UI** — add the control to the settings view in `src/app/index.html`,
+   a DOM ref and read/write wiring in `src/app/settings.ts` (`applyToForm` +
+   `readForm`), and the change listener in `bindEvents`.
 3. **Consumer** — read it via `getSettings()` wherever it applies (usually the
    orchestrator or an encoder). For live reaction, subscribe with
    `onSettingsChanged`.
@@ -173,7 +181,7 @@ each common change. File paths are the source of truth; line numbers drift.
 ### Add a message type
 
 1. Add the variant to the right union in `src/types/index.ts`
-   (`PopupToBgMessage`, `ManagerToBgMessage`, `ContentToBgMessage`, or
+   (`PopupToBgMessage`, `AppToBgMessage`, `ContentToBgMessage`, or
    `BgToContentMessage`). Background-inbound unions are aggregated into
    `InboundMessage`.
 2. Add a `case` to the relevant `switch`/`if` router:

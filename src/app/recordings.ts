@@ -1,9 +1,9 @@
-import { createLogger, setVerbose } from '../shared/Logger';
-import { getSettings } from '../shared/Settings';
+import { createLogger } from '../shared/Logger';
+import type { Settings } from '../shared/Settings';
 import { AudioPlayer } from './AudioPlayer';
 import type { RecordingMetadata, SortField, SortDirection } from '../types';
 
-const logger = createLogger('Manager');
+const logger = createLogger('Recordings');
 
 const loadingMsg = document.getElementById('loadingMsg')!;
 const emptyMsg = document.getElementById('emptyMsg')!;
@@ -249,12 +249,8 @@ window.addEventListener('pagehide', () => {
   objectURLs.clear();
 });
 
-async function init(): Promise<void> {
-  const settings = await getSettings();
-  setVerbose(settings.verboseLogging);
+export async function initRecordings(settings: Settings): Promise<void> {
   sortFieldEl.value = settings.defaultSortField;
   sortDirEl.value = settings.defaultSortDirection;
   await loadRecordings();
 }
-
-void init();

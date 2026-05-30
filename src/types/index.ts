@@ -85,14 +85,17 @@ export type ContentToBgMessage =
   // An armed frame auto-started capture when its media element played.
   | { type: 'ARMED_STARTED' };
 
+// The unified app page (sidebar SPA) has two sections; opening it deep-links to one.
+export type AppSection = 'recordings' | 'settings';
+
 // Popup -> Background (request/response)
 export type PopupToBgMessage =
   | { type: 'GET_TAB_STATE'; payload: { tabId: number } }
   | { type: 'TOGGLE_RECORDING'; payload: { tabId: number } }
-  | { type: 'OPEN_MANAGER' };
+  | { type: 'OPEN_APP'; payload: { section: AppSection } };
 
-// Manager -> Background (request/response)
-export type ManagerToBgMessage =
+// App page -> Background (request/response)
+export type AppToBgMessage =
   | { type: 'LIST_RECORDINGS'; payload: { filter?: RecordingFilter; sort?: SortOptions } }
   | { type: 'DELETE_RECORDING'; payload: { id: string } }
   | { type: 'GET_BLOB'; payload: { id: string } }
@@ -108,7 +111,7 @@ export type TestBridgeMessage =
 // Everything the background's runtime.onMessage listener can receive.
 export type InboundMessage =
   | PopupToBgMessage
-  | ManagerToBgMessage
+  | AppToBgMessage
   | ContentToBgMessage
   | TestBridgeMessage;
 

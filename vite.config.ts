@@ -15,7 +15,7 @@ export default defineConfig({
   plugins: [
     webExtension({
       browser: 'firefox',
-      additionalInputs: ['manager/index.html', 'settings/index.html'],
+      additionalInputs: ['app/index.html'],
     }),
   ],
   build: {

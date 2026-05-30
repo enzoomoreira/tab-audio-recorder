@@ -17,8 +17,7 @@ runs (and therefore what it can and cannot do):
 | `src/background/` | Background event page (non-persistent) | Full                           | None (no page DOM)         |
 | `src/content/`    | Content scripts (per frame)            | Most APIs (messaging, storage) | Page DOM (ISOLATED + MAIN) |
 | `src/popup/`      | Browser-action popup page              | Full                           | Its own document           |
-| `src/manager/`    | Recordings manager (extension tab)     | Full                           | Its own document           |
-| `src/settings/`   | Options page (extension tab)           | Full                           | Its own document           |
+| `src/app/`        | Unified recordings + settings tab      | Full                           | Its own document           |
 | `src/shared/`     | Plain modules imported by the above    | Depends on importer            | n/a                        |
 | `src/types/`      | Type-only declarations                 | n/a                            | n/a                        |
 
@@ -49,8 +48,11 @@ parts:
 - **`commands.record-toggle`** binds `Alt+Shift+R` to the record/arm/stop toggle
   on the active tab — the same logic as the popup button — handled in
   `src/background/index.ts`.
-- **`options_ui.open_in_tab: true`** opens the settings page as a full tab, not a
-  popup.
+- **`options_ui.open_in_tab: true`** opens the unified app page (`app/index.html`)
+  as a full tab, not a popup. The page is a small hash-routed SPA: the sidebar
+  switches between the `#recordings` and `#settings` sections without reloading.
+  The popup's two buttons both go through the background's find-or-focus opener
+  (`OPEN_APP`), which reuses an already-open app tab and just re-targets the hash.
 
 The permission rationale (why each of `tabs`, `webRequest`, `webNavigation`,
 `storage`, `downloads`, `<all_urls>` is needed) lives in the root
@@ -76,8 +78,9 @@ Where to look when you are changing a given concern:
 | Logging                        | `src/shared/Logger.ts`                                                    |
 | Domain model + message types   | `src/types/index.ts`                                                      |
 | Popup UI                       | `src/popup/index.ts`                                                      |
-| Manager UI + audio player      | `src/manager/index.ts` + `src/manager/AudioPlayer.ts`                     |
-| Settings UI                    | `src/settings/index.ts`                                                   |
+| App shell + hash routing       | `src/app/index.ts`                                                        |
+| Recordings UI + audio player   | `src/app/recordings.ts` + `src/app/AudioPlayer.ts`                        |
+| Settings UI                    | `src/app/settings.ts`                                                     |
 
 ## The message bus
 
@@ -90,37 +93,37 @@ read without `as` casts (`src/background/index.ts:33`).
 There are two messaging shapes in play:
 
 - **Request/response** — the sender `await`s a reply. The listener returns a
-  `Promise`. Used by popup/manager calls into the background.
+  `Promise`. Used by popup/app calls into the background.
 - **Proactive (fire-and-forget)** — the sender does not wait. The listener
   returns `undefined`. Used by the content script telling the background a
   recording finished or errored.
 
 ### Message catalog
 
-| Message                  | Direction                 | Shape            | Purpose                                             |
-| ------------------------ | ------------------------- | ---------------- | --------------------------------------------------- |
-| `GET_TAB_STATE`          | Popup -> Background       | request/response | Read a tab's `idle`/`armed`/`recording`/`processing` state |
-| `TOGGLE_RECORDING`       | Popup -> Background       | request/response | One button: stop / disarm / start-now / arm, by state |
-| `OPEN_MANAGER`           | Popup -> Background       | proactive        | Open the recordings manager tab                     |
+| Message                  | Direction                 | Shape            | Purpose                                                            |
+| ------------------------ | ------------------------- | ---------------- | ------------------------------------------------------------------ |
+| `GET_TAB_STATE`          | Popup -> Background       | request/response | Read a tab's `idle`/`armed`/`recording`/`processing` state         |
+| `TOGGLE_RECORDING`       | Popup -> Background       | request/response | One button: stop / disarm / start-now / arm, by state              |
+| `OPEN_APP`               | Popup -> Background       | proactive        | Open/focus the app tab, deep-linked to a section                   |
 | `CHECK_MEDIA`            | Background -> Content     | request/response | "Is a media element playing in this frame?" (`{ found, playing }`) |
-| `START_CAPTURE`          | Background -> Content     | request/response | Start media-element (`captureStream`) capture       |
-| `START_NETWORK_CAPTURE`  | Background -> Content     | request/response | Start network-fetch capture                         |
-| `START_WEBAUDIO_CAPTURE` | Background -> Content     | request/response | Start Web Audio capture                             |
-| `STOP_CAPTURE`           | Background -> Content     | request/response | Stop the active recorder in the frame               |
-| `ARM_CAPTURE`            | Background -> Content     | request/response | Arm the element hook to auto-capture the next play  |
-| `DISARM_CAPTURE`         | Background -> Content     | request/response | Cancel a pending arm                                |
-| `ABORT_CAPTURE`          | Background -> Content     | request/response | Discard an armed capture a losing frame started     |
-| `RECORDING_COMPLETE`     | Content -> Background     | proactive        | Deliver the finished `CaptureResult` blob           |
-| `RECORDING_ERROR`        | Content -> Background     | proactive        | Report a mid-capture failure                        |
-| `ARMED_STARTED`          | Content -> Background     | proactive        | An armed frame auto-started capture on `play()`     |
-| `LIST_RECORDINGS`        | Manager -> Background     | request/response | Query metadata (filter + sort)                      |
-| `DELETE_RECORDING`       | Manager -> Background     | request/response | Delete a recording (metadata + blob)                |
-| `GET_BLOB`               | Manager -> Background     | request/response | Fetch a blob for in-page playback                   |
-| `EXPORT_RECORDING`       | Manager -> Background     | request/response | Run the export pipeline for one recording           |
-| `TEST_START_RECORDING`   | Test bridge -> Background | request/response | E2E-only; stripped from production                  |
-| `TEST_STOP_RECORDING`    | Test bridge -> Background | request/response | E2E-only; stripped from production                  |
-| `TEST_ARM_RECORDING`     | Test bridge -> Background | request/response | E2E-only; stripped from production                  |
-| `TEST_GET_LOGS`          | Test bridge -> Background | request/response | E2E-only; returns the background log buffer          |
+| `START_CAPTURE`          | Background -> Content     | request/response | Start media-element (`captureStream`) capture                      |
+| `START_NETWORK_CAPTURE`  | Background -> Content     | request/response | Start network-fetch capture                                        |
+| `START_WEBAUDIO_CAPTURE` | Background -> Content     | request/response | Start Web Audio capture                                            |
+| `STOP_CAPTURE`           | Background -> Content     | request/response | Stop the active recorder in the frame                              |
+| `ARM_CAPTURE`            | Background -> Content     | request/response | Arm the element hook to auto-capture the next play                 |
+| `DISARM_CAPTURE`         | Background -> Content     | request/response | Cancel a pending arm                                               |
+| `ABORT_CAPTURE`          | Background -> Content     | request/response | Discard an armed capture a losing frame started                    |
+| `RECORDING_COMPLETE`     | Content -> Background     | proactive        | Deliver the finished `CaptureResult` blob                          |
+| `RECORDING_ERROR`        | Content -> Background     | proactive        | Report a mid-capture failure                                       |
+| `ARMED_STARTED`          | Content -> Background     | proactive        | An armed frame auto-started capture on `play()`                    |
+| `LIST_RECORDINGS`        | App -> Background         | request/response | Query metadata (filter + sort)                                     |
+| `DELETE_RECORDING`       | App -> Background         | request/response | Delete a recording (metadata + blob)                               |
+| `GET_BLOB`               | App -> Background         | request/response | Fetch a blob for in-page playback                                  |
+| `EXPORT_RECORDING`       | App -> Background         | request/response | Run the export pipeline for one recording                          |
+| `TEST_START_RECORDING`   | Test bridge -> Background | request/response | E2E-only; stripped from production                                 |
+| `TEST_STOP_RECORDING`    | Test bridge -> Background | request/response | E2E-only; stripped from production                                 |
+| `TEST_ARM_RECORDING`     | Test bridge -> Background | request/response | E2E-only; stripped from production                                 |
+| `TEST_GET_LOGS`          | Test bridge -> Background | request/response | E2E-only; returns the background log buffer                        |
 
 > Note: the background<->MAIN-world hooks do **not** use this bus. The MAIN
 > world cannot call `browser.*`, so the ISOLATED drivers (`WebAudioRecorder`,
@@ -198,6 +201,6 @@ in:
 - **State survives a background suspension.** Anything the orchestrator needs to
   resume after an MV3 wake is written through `SessionState` to
   `storage.session`. Timers are the exception — they are re-armed by `hydrate()`.
-- **The manager builds DOM structurally, never from HTML strings.** `el()` /
+- **The app builds DOM structurally, never from HTML strings.** `el()` /
   `svgEl()` helpers use `textContent` and `createElementNS`, which keeps the AMO
   validator clean and avoids injection surface.

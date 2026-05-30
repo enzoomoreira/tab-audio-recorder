@@ -127,10 +127,10 @@ lists recordings oldest-first and deletes the excess beyond the cap. `0` means
 unlimited. This is the only automatic deletion; everything else is user-initiated
 from the manager.
 
-## In-page playback (manager)
+## In-page playback (recordings view)
 
-The manager does not export to play. `AudioPlayer` (`src/manager/AudioPlayer.ts`)
+The recordings view does not export to play. `AudioPlayer` (`src/app/AudioPlayer.ts`)
 lazily fetches the blob via `GET_BLOB` on first play, wraps it in an object URL,
-and caches that URL across Play and Export for the card. The manager revokes all
+and caches that URL across Play and Export for the card. The view revokes all
 cached URLs on `pagehide` and when a recording is deleted. See the player's
 lazy-load notes inline in `AudioPlayer.ts`.

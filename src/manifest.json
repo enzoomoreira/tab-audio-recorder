@@ -45,7 +45,7 @@
     }
   },
   "options_ui": {
-    "page": "settings/index.html",
+    "page": "app/index.html",
     "open_in_tab": true
   },
   "commands": {
