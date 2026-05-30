@@ -4,7 +4,9 @@
 
 Please do **not** open a public issue for security vulnerabilities.
 
-Report them privately by email to **moreira.enzo@yahoo.com.br** with:
+Report them privately through GitHub's
+[**Security Advisories**](https://github.com/YOUR-USERNAME/tab-audio-recorder/security/advisories/new)
+("Report a vulnerability" on the repository's **Security** tab). Include:
 
 - a description of the issue and its impact,
 - steps to reproduce (or a proof of concept),

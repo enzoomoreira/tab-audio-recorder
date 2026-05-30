@@ -3,7 +3,7 @@
   "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "ffox-rec",
+      "name": "tab-audio-recorder",
       "dependencies": {
         "@breezystack/lamejs": "^1.2.7",
       },
