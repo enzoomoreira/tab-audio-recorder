@@ -90,7 +90,12 @@ All cross-realm communication is `browser.runtime.sendMessage` /
 `browser.tabs.sendMessage`. Every message is a **discriminated union** keyed on
 `type`, declared in `src/types/index.ts`. The background's listener is typed as
 the closed `InboundMessage` union and narrows with a `switch`, so payloads are
-read without `as` casts (`src/background/index.ts:33`).
+read without `as` casts (`src/background/index.ts`).
+
+Popup/app calls into the background go through the typed `sendToBackground`
+wrapper (`src/shared/messaging.ts`): it constrains the request to the outbound
+union and resolves with the matching response type (via a `ResponseFor` map), so
+the **calling** side is checked too — no `as` cast on the reply.
 
 There are two messaging shapes in play:
 

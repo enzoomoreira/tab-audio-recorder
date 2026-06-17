@@ -1,4 +1,5 @@
 import { createLogger } from '../shared/Logger';
+import { sendToBackground } from '../shared/messaging';
 import type { Settings } from '../shared/Settings';
 import { AudioPlayer } from './AudioPlayer';
 import type { RecordingMetadata, SortField, SortDirection } from '../types';
@@ -91,10 +92,10 @@ async function loadRecordings(): Promise<void> {
 
   let recordings: RecordingMetadata[];
   try {
-    recordings = await browser.runtime.sendMessage({
+    recordings = await sendToBackground({
       type: 'LIST_RECORDINGS',
       payload: {
-        filter: host ? { host } : undefined,
+        filter: host ? { host } : {},
         sort: { field, direction },
       },
     });
@@ -169,10 +170,7 @@ function buildCard(meta: RecordingMetadata): HTMLLIElement {
     const cached = objectURLs.get(meta.id);
     if (cached) return cached;
 
-    const blob: Blob | null = await browser.runtime.sendMessage({
-      type: 'GET_BLOB',
-      payload: { id: meta.id },
-    });
+    const blob = await sendToBackground({ type: 'GET_BLOB', payload: { id: meta.id } });
     if (!blob) return null;
 
     const url = URL.createObjectURL(blob);
@@ -189,10 +187,7 @@ function buildCard(meta: RecordingMetadata): HTMLLIElement {
 
     // Background owns the export pipeline (template, subfolder, downloads API).
     // This keeps the lazy-loaded objectURL cache for in-page playback only.
-    const result: { ok: boolean; error?: string } = await browser.runtime.sendMessage({
-      type: 'EXPORT_RECORDING',
-      payload: { id: meta.id },
-    });
+    const result = await sendToBackground({ type: 'EXPORT_RECORDING', payload: { id: meta.id } });
 
     if (!result.ok) {
       exportBtn.textContent = 'Error';
@@ -225,7 +220,7 @@ function buildCard(meta: RecordingMetadata): HTMLLIElement {
       objectURLs.delete(meta.id);
     }
 
-    await browser.runtime.sendMessage({ type: 'DELETE_RECORDING', payload: { id: meta.id } });
+    await sendToBackground({ type: 'DELETE_RECORDING', payload: { id: meta.id } });
 
     li.remove();
     if (!listEl.children.length) {

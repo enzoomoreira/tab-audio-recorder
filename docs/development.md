@@ -187,8 +187,11 @@ each common change. File paths are the source of truth; line numbers drift.
 2. Add a `case` to the relevant `switch`/`if` router:
    background in `src/background/index.ts`, content in `src/content/index.ts`.
    Return a `Promise` for request/response, `undefined` for fire-and-forget.
-3. Send it from the originating UI/realm with `browser.runtime.sendMessage` (or
-   `browser.tabs.sendMessage` with a `{ frameId }` for background -> content).
+3. Send it from the originating UI/realm. Popup/app -> background calls go
+   through the typed `sendToBackground` wrapper (`src/shared/messaging.ts`) — add
+   the new request's response type to its `ResponseFor` map. Background ->
+   content uses `browser.tabs.sendMessage` with a `{ frameId }`; content ->
+   background fire-and-forget uses `browser.runtime.sendMessage` directly.
 
 ### Add an export format
 

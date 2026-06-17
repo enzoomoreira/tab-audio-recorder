@@ -1,5 +1,6 @@
 import { createLogger } from '../shared/Logger';
-import type { TabRecordingState, ActionResult } from '../types';
+import { sendToBackground } from '../shared/messaging';
+import type { TabRecordingState } from '../types';
 
 const logger = createLogger('Popup');
 
@@ -24,11 +25,8 @@ async function init(): Promise<void> {
 
 async function refreshState(): Promise<void> {
   if (tabId == null) return;
-  const response = await browser.runtime.sendMessage({
-    type: 'GET_TAB_STATE',
-    payload: { tabId },
-  });
-  applyState((response as { state: TabRecordingState }).state);
+  const { state } = await sendToBackground({ type: 'GET_TAB_STATE', payload: { tabId } });
+  applyState(state);
 }
 
 function applyState(next: TabRecordingState): void {
@@ -76,11 +74,7 @@ recordBtn.addEventListener('click', async () => {
 
   const prev = state;
   recordBtn.disabled = true;
-  const res = await browser.runtime.sendMessage({
-    type: 'TOGGLE_RECORDING',
-    payload: { tabId },
-  });
-  const result = res as ActionResult;
+  const result = await sendToBackground({ type: 'TOGGLE_RECORDING', payload: { tabId } });
   if (!result.ok) {
     applyState(prev);
     showError(result.error ?? 'Action failed');
@@ -90,12 +84,12 @@ recordBtn.addEventListener('click', async () => {
 });
 
 managerBtn.addEventListener('click', () => {
-  void browser.runtime.sendMessage({ type: 'OPEN_APP', payload: { section: 'recordings' } });
+  void sendToBackground({ type: 'OPEN_APP', payload: { section: 'recordings' } });
   window.close();
 });
 
 settingsBtn.addEventListener('click', () => {
-  void browser.runtime.sendMessage({ type: 'OPEN_APP', payload: { section: 'settings' } });
+  void sendToBackground({ type: 'OPEN_APP', payload: { section: 'settings' } });
   window.close();
 });
 
