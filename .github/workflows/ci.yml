@@ -33,14 +33,22 @@ jobs:
       - run: bun install --frozen-lockfile
       # Firefox 152+ produces no captureStream/MediaRecorder data unless its audio
       # backend (cubeb -> PulseAudio on Linux) has a real output sink; the runner
-      # has none by default. A null sink is enough for the captured streams to flow.
+      # has none by default. Start a PulseAudio daemon with a null sink and pin
+      # XDG_RUNTIME_DIR (exported to GITHUB_ENV) so the Firefox launched in the
+      # next step, under xvfb-run, connects to the same socket the daemon created.
       - name: Start PulseAudio with a dummy sink
         run: |
           sudo apt-get update
           sudo apt-get install -y pulseaudio
-          pulseaudio --start --exit-idle-time=-1
+          export XDG_RUNTIME_DIR=/run/user/$(id -u)
+          sudo mkdir -p "$XDG_RUNTIME_DIR"
+          sudo chown "$(id -u):$(id -g)" "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+          pulseaudio -D --exit-idle-time=-1
           pactl load-module module-null-sink sink_name=DummyOutput
           pactl set-default-sink DummyOutput
+          pactl list short sinks
       # The fixture launches Firefox headed; xvfb provides a virtual display.
       # geckodriver is the npm dev dependency. globalSetup reaps leaked processes.
       - run: xvfb-run -a bun run test:e2e
