@@ -1,43 +1,17 @@
 import { createLogger } from '../shared/Logger';
+import { onPageMessage, postToPage, waitForReply } from './pageBridge';
 import type { IRecorder, CaptureResult } from '../types';
 
 const logger = createLogger('MediaElementRecorder');
 
-const TAG = 'tab-audio-recorder';
-const TAG_PAGE = 'tab-audio-recorder-page';
-
-function postToPage(payload: Record<string, unknown>): void {
-  window.postMessage({ source: TAG, ...payload }, window.location.origin);
-}
-
-function waitForReply<T>(type: string, timeoutMs = 10_000): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = window.setTimeout(() => {
-      window.removeEventListener('message', handler);
-      reject(new Error(`Page hook did not respond within ${timeoutMs}ms`));
-    }, timeoutMs);
-
-    const handler = (event: MessageEvent): void => {
-      if (event.source !== window) return;
-      const data = event.data as { source?: string; type?: string } | null;
-      if (!data || data.source !== TAG_PAGE || data.type !== type) return;
-      window.clearTimeout(timer);
-      window.removeEventListener('message', handler);
-      resolve(data as unknown as T);
-    };
-
-    window.addEventListener('message', handler);
-  });
-}
-
 // ISOLATED-world driver for the MAIN-world MediaElementHook. The element (which
 // may be detached from the DOM) lives in the page world and is unreachable from
 // here, so detection and capture both happen in the hook; this class just speaks
-// the postMessage protocol.
+// the postMessage protocol (see pageBridge.ts).
 export class MediaElementRecorder implements IRecorder {
   private recording = false;
-  private errorListener: ((event: MessageEvent) => void) | null = null;
-  private armListener: ((event: MessageEvent) => void) | null = null;
+  private disposeErrorListener: (() => void) | null = null;
+  private disposeArmListener: (() => void) | null = null;
 
   // Invoked if the page-world recorder errors spontaneously mid-capture.
   onError: ((reason: string) => void) | null = null;
@@ -47,60 +21,50 @@ export class MediaElementRecorder implements IRecorder {
   onArmFailed: ((reason: string) => void) | null = null;
 
   private installErrorListener(): void {
-    const handler = (event: MessageEvent): void => {
-      if (event.source !== window) return;
-      const data = event.data as { source?: string; type?: string; error?: string } | null;
-      if (!data || data.source !== TAG_PAGE || data.type !== 'EL_ERROR') return;
+    this.disposeErrorListener = onPageMessage<{ error?: string }>('EL_ERROR', (data) => {
       this.recording = false;
       this.removeErrorListener();
       this.onError?.(data.error ?? 'Media element capture error');
-    };
-    this.errorListener = handler;
-    window.addEventListener('message', handler);
+    });
   }
 
   private removeErrorListener(): void {
-    if (this.errorListener) {
-      window.removeEventListener('message', this.errorListener);
-      this.errorListener = null;
-    }
+    this.disposeErrorListener?.();
+    this.disposeErrorListener = null;
   }
 
   // Listens for the spontaneous EL_ARM_FIRED the hook sends when an armed
   // element plays. On success the recorder transitions to recording (and an
   // error listener is installed, mirroring start()); on failure it reports back.
   private installArmListener(): void {
-    const handler = (event: MessageEvent): void => {
-      if (event.source !== window) return;
-      const data = event.data as
-        | { source?: string; type?: string; ok?: boolean; error?: string }
-        | null;
-      if (!data || data.source !== TAG_PAGE || data.type !== 'EL_ARM_FIRED') return;
-      this.removeArmListener();
-      if (data.ok) {
-        this.recording = true;
-        this.installErrorListener();
-        this.onArmFired?.();
-      } else {
-        this.onArmFailed?.(data.error ?? 'Armed capture failed');
-      }
-    };
-    this.armListener = handler;
-    window.addEventListener('message', handler);
+    this.disposeArmListener = onPageMessage<{ ok?: boolean; error?: string }>(
+      'EL_ARM_FIRED',
+      (data) => {
+        this.removeArmListener();
+        if (data.ok) {
+          this.recording = true;
+          this.installErrorListener();
+          this.onArmFired?.();
+        } else {
+          this.onArmFailed?.(data.error ?? 'Armed capture failed');
+        }
+      },
+    );
   }
 
   private removeArmListener(): void {
-    if (this.armListener) {
-      window.removeEventListener('message', this.armListener);
-      this.armListener = null;
-    }
+    this.disposeArmListener?.();
+    this.disposeArmListener = null;
   }
 
   /** What the page has played: any capturable element, and whether one is playing now. */
   async probe(): Promise<{ found: boolean; playing: boolean }> {
     postToPage({ type: 'EL_PROBE' });
     try {
-      const reply = await waitForReply<{ found: boolean; playing: boolean }>('EL_PROBE_RESULT', 1000);
+      const reply = await waitForReply<{ found: boolean; playing: boolean }>(
+        'EL_PROBE_RESULT',
+        1000,
+      );
       return { found: reply.found, playing: reply.playing };
     } catch {
       return { found: false, playing: false };

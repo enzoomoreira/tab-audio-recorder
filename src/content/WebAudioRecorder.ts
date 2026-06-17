@@ -1,60 +1,27 @@
 import { createLogger } from '../shared/Logger';
+import { onPageMessage, postToPage, waitForReply } from './pageBridge';
 import type { IRecorder, CaptureResult } from '../types';
 
 const logger = createLogger('WebAudioRecorder');
 
-const TAG = 'tab-audio-recorder';
-const TAG_PAGE = 'tab-audio-recorder-page';
-
-function postToPage(payload: Record<string, unknown>): void {
-  window.postMessage({ source: TAG, ...payload }, window.location.origin);
-}
-
-function waitForReply<T>(type: string, timeoutMs = 10_000): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = window.setTimeout(() => {
-      window.removeEventListener('message', handler);
-      reject(new Error(`Page hook did not respond within ${timeoutMs}ms`));
-    }, timeoutMs);
-
-    const handler = (event: MessageEvent): void => {
-      if (event.source !== window) return;
-      const data = event.data as { source?: string; type?: string } | null;
-      if (!data || data.source !== TAG_PAGE || data.type !== type) return;
-      window.clearTimeout(timer);
-      window.removeEventListener('message', handler);
-      resolve(data as unknown as T);
-    };
-
-    window.addEventListener('message', handler);
-  });
-}
-
 export class WebAudioRecorder implements IRecorder {
   private recording = false;
-  private errorListener: ((event: MessageEvent) => void) | null = null;
+  private disposeErrorListener: (() => void) | null = null;
 
   // Invoked if the page-world recorder errors spontaneously mid-capture.
   onError: ((reason: string) => void) | null = null;
 
   private installErrorListener(): void {
-    const handler = (event: MessageEvent): void => {
-      if (event.source !== window) return;
-      const data = event.data as { source?: string; type?: string; error?: string } | null;
-      if (!data || data.source !== TAG_PAGE || data.type !== 'ERROR') return;
+    this.disposeErrorListener = onPageMessage<{ error?: string }>('ERROR', (data) => {
       this.recording = false;
       this.removeErrorListener();
       this.onError?.(data.error ?? 'Web Audio capture error');
-    };
-    this.errorListener = handler;
-    window.addEventListener('message', handler);
+    });
   }
 
   private removeErrorListener(): void {
-    if (this.errorListener) {
-      window.removeEventListener('message', this.errorListener);
-      this.errorListener = null;
-    }
+    this.disposeErrorListener?.();
+    this.disposeErrorListener = null;
   }
 
   async probe(): Promise<boolean> {
