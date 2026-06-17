@@ -16,8 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `data_collection_permissions` declaration. It also covers the `world: "MAIN"`
   content scripts (Firefox 128) that capture strategies 1 and 3 rely on, and
   keeps `web-ext lint` warning-free.
-- `bun run package` script that runs a production build and zips the extension
-  into `web-ext-artifacts/` for AMO submission.
+- `bun run package` and `bun run package:source` scripts that produce the built
+  extension zip and the source archive for AMO submission, documented in
+  `docs/publishing.md` (the AMO "listed" workflow + reviewer build instructions).
 
 ### Changed
 
