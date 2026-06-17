@@ -41,6 +41,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y alsa-utils pulseaudio
+          # The GitHub Azure kernel ships snd-aloop only in linux-modules-extra.
+          sudo apt-get install -y "linux-modules-extra-$(uname -r)"
           sudo modprobe snd-aloop
           # cubeb alsa backend: make the loopback the default ALSA device.
           printf 'pcm.!default {\n  type plug\n  slave.pcm "hw:Loopback,0,0"\n}\nctl.!default {\n  type hw\n  card Loopback\n}\n' | sudo tee /etc/asound.conf >/dev/null
