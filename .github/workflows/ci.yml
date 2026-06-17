@@ -30,6 +30,10 @@ jobs:
         with:
           bun-version: latest
       - uses: browser-actions/setup-firefox@v1
+        with:
+          # ISOLATION EXPERIMENT: hold the (refactored) code constant and vary
+          # only the browser. 152.0 fails here; 151.0.2 was the last green CI.
+          firefox-version: 151.0.2
       - run: bun install --frozen-lockfile
       # Firefox 152+ produces no captureStream/MediaRecorder data unless its audio
       # backend (cubeb -> PulseAudio on Linux) has a real output sink; the runner
