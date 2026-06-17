@@ -30,6 +30,9 @@ jobs:
         with:
           bun-version: latest
       - uses: browser-actions/setup-firefox@v1
+        with:
+          # Reproduce the 30/mai green config exactly: pre-refactor code + 151.0.2.
+          firefox-version: 151.0.2
       - run: bun install --frozen-lockfile
       # The fixture launches Firefox headed; xvfb provides a virtual display.
       # geckodriver is the npm dev dependency. globalSetup reaps leaked processes.
