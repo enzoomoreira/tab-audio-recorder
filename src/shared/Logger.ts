@@ -28,7 +28,9 @@ function stringifyArg(a: unknown): string {
 function capture(level: string, tag: string, args: unknown[]): void {
   if (!__TEST_BRIDGE__) return;
   try {
-    logBuffer.push(`${new Date().toISOString()} ${level} ${tag} ${args.map(stringifyArg).join(' ')}`);
+    logBuffer.push(
+      `${new Date().toISOString()} ${level} ${tag} ${args.map(stringifyArg).join(' ')}`,
+    );
     if (logBuffer.length > MAX_BUFFER) logBuffer.shift();
   } catch {
     // Diagnostics must never throw.

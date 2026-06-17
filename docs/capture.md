@@ -39,7 +39,7 @@ Audio can live in any frame, so capture is addressed per `frameId`, not per tab:
   and sorts them **top frame (0) first**, so the top document is preferred when
   several frames have media.
 - `findFrameWithMedia` sends `CHECK_MEDIA` to each frame and returns the first
-  that answers `{ playing: true }` — a media element *currently playing*. A
+  that answers `{ playing: true }` — a media element _currently playing_. A
   paused, previously-played element no longer qualifies, so the toggle arms (see
   below) instead of capturing silence. Frames without our content script (e.g.
   `about:`, `chrome://`) simply throw and are skipped.
@@ -82,7 +82,7 @@ any page script runs. It is self-contained (no imports, no `browser.*`):
 - **Picks the capture target** on `START`: a currently-playing element (video
   preferred — it carries the audio we want), else the most recently played one.
 - **Arm + auto-start.** On `EL_ARM` the hook sets an armed flag; the very next
-  `play()` starts capture on *that* element synchronously, inside the patched
+  `play()` starts capture on _that_ element synchronously, inside the patched
   `play()`, with **no background round-trip** — so the recording catches the audio
   from sample zero. It reports the outcome with a spontaneous `EL_ARM_FIRED`, which
   the ISOLATED driver forwards to the background as `ARMED_STARTED`. `EL_DISARM`
@@ -111,14 +111,14 @@ The ISOLATED half the orchestrator drives. Because the element lives in the MAIN
 world (and may be detached, so unreachable from here), detection and capture both
 happen in the hook; this class just speaks a small `window.postMessage` protocol:
 
-| ISOLATED -> MAIN (`tab-audio-recorder`) | MAIN -> ISOLATED (`tab-audio-recorder-page`)    |
-| --------------------------------------- | ----------------------------------------------- |
-| `EL_PROBE`                              | `EL_PROBE_RESULT { found, playing }`            |
-| `EL_START { bitrate }`                  | `EL_STARTED { ok, error? }`                     |
-| `EL_STOP`                               | `EL_STOPPED { ok, blob, mimeType, ... }`        |
+| ISOLATED -> MAIN (`tab-audio-recorder`) | MAIN -> ISOLATED (`tab-audio-recorder-page`)     |
+| --------------------------------------- | ------------------------------------------------ |
+| `EL_PROBE`                              | `EL_PROBE_RESULT { found, playing }`             |
+| `EL_START { bitrate }`                  | `EL_STARTED { ok, error? }`                      |
+| `EL_STOP`                               | `EL_STOPPED { ok, blob, mimeType, ... }`         |
 | `EL_ARM { bitrate }`                    | `EL_ARM_FIRED { ok, error? }` (on the next play) |
-| `EL_DISARM` / `EL_ABORT`                | — (no reply)                                    |
-| (passive listen)                        | `EL_ERROR { error }` (spontaneous mid-capture)  |
+| `EL_DISARM` / `EL_ABORT`                | — (no reply)                                     |
+| (passive listen)                        | `EL_ERROR { error }` (spontaneous mid-capture)   |
 
 - `probe()` (1s timeout) answers the `CHECK_MEDIA` frame check: has the page
   played any capturable element (`found`), and is one playing right now
@@ -234,17 +234,17 @@ Most capture paths have a dedicated fixture under `test-pages/`, exercised by th
 Selenium suite (`test/e2e/capture.test.ts`). Useful when adding or debugging a
 strategy:
 
-| Test page                     | Exercises                                                 |
-| ----------------------------- | --------------------------------------------------------- |
-| `01-audio-src-direct.html`    | Element strategy on a plain `<audio>`                     |
-| `02-video-with-audio.html`    | Element strategy, audio-only rebuild (YouTube-bug guard)  |
-| `03-mse-blob.html`            | Element strategy on a MediaSource-fed `<audio>`           |
-| `06-webaudio-pure.html`       | Web Audio strategy (an `OscillatorNode`)                  |
-| `07-shadow-dom.html`          | `play()` hook catching an element in a Shadow DOM root    |
-| `08-iframe-same-origin.html`  | `play()` hook catching an element in a same-origin iframe |
-| `09-iframe-cross-origin.html` | Cross-origin frame reached via `all_frames` + routing     |
-| `13-drm-fake.html`            | DRM/EME refusal (faked `mediaKeys`)                       |
-| `14-detached-audio.html`      | Detached `new Audio()` (WhatsApp-style), never in DOM     |
+| Test page                     | Exercises                                                   |
+| ----------------------------- | ----------------------------------------------------------- |
+| `01-audio-src-direct.html`    | Element strategy on a plain `<audio>`                       |
+| `02-video-with-audio.html`    | Element strategy, audio-only rebuild (YouTube-bug guard)    |
+| `03-mse-blob.html`            | Element strategy on a MediaSource-fed `<audio>`             |
+| `06-webaudio-pure.html`       | Web Audio strategy (an `OscillatorNode`)                    |
+| `07-shadow-dom.html`          | `play()` hook catching an element in a Shadow DOM root      |
+| `08-iframe-same-origin.html`  | `play()` hook catching an element in a same-origin iframe   |
+| `09-iframe-cross-origin.html` | Cross-origin frame reached via `all_frames` + routing       |
+| `13-drm-fake.html`            | DRM/EME refusal (faked `mediaKeys`)                         |
+| `14-detached-audio.html`      | Detached `new Audio()` (WhatsApp-style), never in DOM       |
 | `15-arm-then-play.html`       | Arm before playback, then auto-capture on the next `play()` |
 
 The **network strategy has no E2E fixture** — it is covered by

@@ -262,7 +262,11 @@
     if (!data || data.source !== TAG) return;
 
     if (data.type === 'EL_PROBE') {
-      reply({ type: 'EL_PROBE_RESULT', found: tracked.length > 0, playing: tracked.some(isPlaying) });
+      reply({
+        type: 'EL_PROBE_RESULT',
+        found: tracked.length > 0,
+        playing: tracked.some(isPlaying),
+      });
     } else if (data.type === 'EL_START') {
       void handleStart(data.bitrate ?? 128_000);
     } else if (data.type === 'EL_STOP') {
