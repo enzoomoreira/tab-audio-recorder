@@ -81,7 +81,7 @@ Where to look when you are changing a given concern:
 | Domain model + message types   | `src/types/index.ts`                                                      |
 | Popup UI                       | `src/popup/index.ts`                                                      |
 | App shell + hash routing       | `src/app/index.ts`                                                        |
-| Recordings UI + audio player   | `src/app/recordings.ts` + `src/app/AudioPlayer.ts`                        |
+| Recordings UI + audio player   | `src/app/recordings.ts` + `src/app/recordingCard.ts` + `src/app/AudioPlayer.ts` |
 | Settings UI                    | `src/app/settings.ts`                                                     |
 
 ## The message bus
