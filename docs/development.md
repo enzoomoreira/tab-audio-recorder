@@ -130,6 +130,15 @@ bun run test:e2e     # builds with the bridge, then runs the Selenium suite
 The `test-pages/` fixtures map one-to-one onto capture paths — see the
 [strategy/test-page map](capture.md#strategy-and-e2e-test-page-map).
 
+**This suite is run locally before a release, not in push/PR CI.** Capture only
+works when a media element actually plays, which needs a real, clocked audio
+output device. GitHub-hosted ubuntu runners no longer provide one (the image
+dropped its default device; a PulseAudio null sink is not enough; the Azure
+kernel ships no `snd-aloop` loopback), so the suite cannot pass there — it is
+gated to a manual, non-blocking `workflow_dispatch` job in `.github/workflows/ci.yml`.
+The push/PR `check` job (lint, typecheck, unit, build, `web-ext lint`) is the
+blocking gate. Run `bun run test:e2e` locally (12/12 green on a real desktop).
+
 ## Lint and format
 
 ```bash
