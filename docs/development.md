@@ -18,10 +18,22 @@ bun install
 bun run build        # production build -> dist/
 bun run dev          # rebuild on change
 bun run start        # launch a clean Firefox with the extension (web-ext)
+bun run package      # production build, then zip dist/ into web-ext-artifacts/ for AMO
 ```
 
 To load manually instead of `web-ext`: open `about:debugging#/runtime/this-firefox`
 -> "Load Temporary Add-on" -> pick `dist/manifest.json`.
+
+### Packaging for AMO
+
+`bun run package` runs a production build (no test bridge) and then
+`web-ext build` to produce the submittable zip under `web-ext-artifacts/`. Upload
+that zip to [addons.mozilla.org](https://addons.mozilla.org/developers/). The
+manifest pins `browser_specific_settings.gecko.strict_min_version` to `142.0` —
+the minimum Firefox (desktop + Android) that supports the
+`data_collection_permissions` declaration; it also covers the `world: "MAIN"`
+content scripts (Firefox 128) that capture strategies 1 and 3 rely on, which
+keeps `web-ext lint` warning-free.
 
 ### Build pipeline
 

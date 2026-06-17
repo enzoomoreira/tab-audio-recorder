@@ -1,6 +1,6 @@
 {
   "name": "tab-audio-recorder",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Firefox extension to record browser tab audio for sampling",
   "private": true,
   "type": "module",
@@ -9,6 +9,7 @@
     "dev": "vite build --watch",
     "start": "web-ext run --source-dir dist --browser-console",
     "lint:ext": "web-ext lint --source-dir dist",
+    "package": "bun run build && web-ext build --source-dir dist --artifacts-dir web-ext-artifacts --overwrite-dest",
     "lint": "eslint src",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

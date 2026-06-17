@@ -2,4 +2,5 @@ node_modules/
 dist/
 coverage/
 e2e-artifacts/
+web-ext-artifacts/
 *.zip

@@ -62,27 +62,27 @@ The permission rationale (why each of `tabs`, `webRequest`, `webNavigation`,
 
 Where to look when you are changing a given concern:
 
-| Concern                        | File                                                                      |
-| ------------------------------ | ------------------------------------------------------------------------- |
-| Message router (background)    | `src/background/index.ts`                                                 |
-| Capture orchestration + state  | `src/background/Orchestrator.ts`                                          |
-| Save / export / prune pipeline | `src/background/RecordingsService.ts`                                     |
-| Toolbar badge                  | `src/background/badge.ts`                                                 |
-| Per-tab state + persistence    | `src/shared/SessionState.ts`                                              |
-| Element capture strategy       | `src/content/MediaElementRecorder.ts` + `src/content/MediaElementHook.ts` |
-| Network capture strategy       | `src/content/NetworkRecorder.ts`                                          |
-| Web Audio capture strategy     | `src/content/WebAudioRecorder.ts` + `src/content/AudioContextHook.ts`     |
-| Content-script message handler | `src/content/index.ts`                                                    |
-| Persistence (IndexedDB)        | `src/shared/Repository.ts`                                                |
-| Transcode (WAV/MP3)            | `src/shared/AudioEncoder.ts`                                              |
-| Export filename rendering      | `src/shared/FilenameTemplate.ts`                                          |
-| Settings model + storage       | `src/shared/Settings.ts`                                                  |
-| Logging                        | `src/shared/Logger.ts`                                                    |
-| Domain model + message types   | `src/types/index.ts`                                                      |
-| Popup UI                       | `src/popup/index.ts`                                                      |
-| App shell + hash routing       | `src/app/index.ts`                                                        |
+| Concern                        | File                                                                            |
+| ------------------------------ | ------------------------------------------------------------------------------- |
+| Message router (background)    | `src/background/index.ts`                                                       |
+| Capture orchestration + state  | `src/background/Orchestrator.ts`                                                |
+| Save / export / prune pipeline | `src/background/RecordingsService.ts`                                           |
+| Toolbar badge                  | `src/background/badge.ts`                                                       |
+| Per-tab state + persistence    | `src/shared/SessionState.ts`                                                    |
+| Element capture strategy       | `src/content/MediaElementRecorder.ts` + `src/content/MediaElementHook.ts`       |
+| Network capture strategy       | `src/content/NetworkRecorder.ts`                                                |
+| Web Audio capture strategy     | `src/content/WebAudioRecorder.ts` + `src/content/AudioContextHook.ts`           |
+| Content-script message handler | `src/content/index.ts`                                                          |
+| Persistence (IndexedDB)        | `src/shared/Repository.ts`                                                      |
+| Transcode (WAV/MP3)            | `src/shared/AudioEncoder.ts`                                                    |
+| Export filename rendering      | `src/shared/FilenameTemplate.ts`                                                |
+| Settings model + storage       | `src/shared/Settings.ts`                                                        |
+| Logging                        | `src/shared/Logger.ts`                                                          |
+| Domain model + message types   | `src/types/index.ts`                                                            |
+| Popup UI                       | `src/popup/index.ts`                                                            |
+| App shell + hash routing       | `src/app/index.ts`                                                              |
 | Recordings UI + audio player   | `src/app/recordings.ts` + `src/app/recordingCard.ts` + `src/app/AudioPlayer.ts` |
-| Settings UI                    | `src/app/settings.ts`                                                     |
+| Settings UI                    | `src/app/settings.ts`                                                           |
 
 ## The message bus
 

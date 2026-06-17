@@ -56,16 +56,17 @@ bun run start
 
 ## Scripts
 
-| Command            | What it does                                     |
-| ------------------ | ------------------------------------------------ |
-| `bun run build`    | Production build into `dist/`                    |
-| `bun run dev`      | Rebuild on change                                |
-| `bun run start`    | Launch Firefox with the extension (web-ext)      |
-| `bun run test`     | Vitest unit suite                                |
-| `bun run test:e2e` | Selenium E2E suite (needs Firefox + geckodriver) |
-| `bun run lint`     | ESLint over `src`                                |
-| `bun run lint:ext` | `web-ext lint` over `dist` (AMO validator)       |
-| `bun run format`   | Prettier write                                   |
+| Command            | What it does                                                 |
+| ------------------ | ------------------------------------------------------------ |
+| `bun run build`    | Production build into `dist/`                                |
+| `bun run dev`      | Rebuild on change                                            |
+| `bun run start`    | Launch Firefox with the extension (web-ext)                  |
+| `bun run test`     | Vitest unit suite                                            |
+| `bun run test:e2e` | Selenium E2E suite (needs Firefox + geckodriver)             |
+| `bun run lint`     | ESLint over `src`                                            |
+| `bun run lint:ext` | `web-ext lint` over `dist` (AMO validator)                   |
+| `bun run package`  | Production build, then zip into `web-ext-artifacts/` for AMO |
+| `bun run format`   | Prettier write                                               |
 
 ## Architecture
 
