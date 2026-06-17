@@ -45,6 +45,10 @@ jobs:
           sudo chown "$(id -u):$(id -g)" "$XDG_RUNTIME_DIR"
           chmod 700 "$XDG_RUNTIME_DIR"
           echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+          # Point Firefox's cubeb backend straight at the daemon's socket instead
+          # of relying on XDG_RUNTIME_DIR discovery alone (the socket is created
+          # below at $XDG_RUNTIME_DIR/pulse/native).
+          echo "PULSE_SERVER=unix:$XDG_RUNTIME_DIR/pulse/native" >> "$GITHUB_ENV"
           pulseaudio -D --exit-idle-time=-1
           pactl load-module module-null-sink sink_name=DummyOutput
           pactl set-default-sink DummyOutput
