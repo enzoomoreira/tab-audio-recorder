@@ -76,8 +76,8 @@ bun run test:watch   # vitest watch
   `MediaRecorder` and UI paths are left to E2E.
 
 Tests live next to their subject (`Foo.ts` -> `Foo.test.ts`). Logic-heavy modules
-covered today: `Orchestrator`, `SessionState`, `Settings`, `Repository`,
-`AudioEncoder`, `FilenameTemplate`, `NetworkRecorder`. The MAIN-world hooks
+covered today: `Orchestrator`, `RecordingsService`, `SessionState`, `Settings`,
+`Repository`, `AudioEncoder`, `FilenameTemplate`, `NetworkRecorder`. The MAIN-world hooks
 (`MediaElementHook`, `AudioContextHook`) and their ISOLATED drivers are covered
 end-to-end by the Selenium suite, since they need a real `MediaRecorder`.
 

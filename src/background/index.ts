@@ -10,9 +10,8 @@ import {
   clearTab,
   hydrate,
   onMediaURLDetected,
-  exportRecordingById,
-  repository,
 } from './Orchestrator';
+import { listRecordings, deleteRecording, getBlob, exportRecordingById } from './RecordingsService';
 import { createLogger, setVerbose, getLogBuffer } from '../shared/Logger';
 import { getSettings, onSettingsChanged } from '../shared/Settings';
 import type { InboundMessage, AppSection } from '../types';
@@ -101,13 +100,13 @@ browser.runtime.onMessage.addListener(
 
       // --- Manager ---
       case 'LIST_RECORDINGS':
-        return repository.list(message.payload.filter, message.payload.sort);
+        return listRecordings(message.payload.filter, message.payload.sort);
 
       case 'DELETE_RECORDING':
-        return repository.deleteById(message.payload.id);
+        return deleteRecording(message.payload.id);
 
       case 'GET_BLOB':
-        return repository.getBlobById(message.payload.id);
+        return getBlob(message.payload.id);
 
       case 'EXPORT_RECORDING':
         return exportRecordingById(message.payload.id);

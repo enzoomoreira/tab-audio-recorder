@@ -1,20 +1,11 @@
-import { IndexedDBRepository } from '../shared/Repository';
 import { createLogger } from '../shared/Logger';
 import { getSettings } from '../shared/Settings';
-import { applyTemplate } from '../shared/FilenameTemplate';
-import { encodeForExport } from '../shared/AudioEncoder';
 import { SessionState } from '../shared/SessionState';
-import type {
-  TabRecordingState,
-  RecordingMetadata,
-  Recording,
-  CaptureResult,
-  ActionResult,
-} from '../types';
+import { updateBadge } from './badge';
+import { saveCapture } from './RecordingsService';
+import type { TabRecordingState, CaptureResult, ActionResult } from '../types';
 
 const logger = createLogger('Orchestrator');
-
-export const repository = new IndexedDBRepository();
 
 // Per-tab recording state, persisted to storage.session so it survives a
 // background suspension (Firefox MV3 background is non-persistent).
@@ -30,33 +21,8 @@ const processingTimers = new Map<number, ReturnType<typeof setTimeout>>();
 // STOP path, so it works uniformly across every capture strategy.
 const maxDurationTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
-function generateId(): string {
-  return `rec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
 export function getTabState(tabId: number): TabRecordingState {
   return session.state(tabId);
-}
-
-// Reflects the tab's recording state on the toolbar icon, so the armed/recording
-// state is visible even when the popup is closed. `browser.action` is optional
-// here so unit tests (which mock a minimal `browser`) don't need to stub it.
-function updateBadge(tabId: number, state: TabRecordingState): void {
-  const action = browser.action;
-  if (!action?.setBadgeText) return;
-  let text = '';
-  let color = '#d98000';
-  if (state === 'armed') {
-    text = '●'; // filled circle
-    color = '#d98000'; // amber
-  } else if (state === 'recording') {
-    text = 'REC';
-    color = '#cc0000'; // red
-  }
-  void action.setBadgeText({ text, tabId }).catch(() => undefined);
-  if (text && action.setBadgeBackgroundColor) {
-    void action.setBadgeBackgroundColor({ color, tabId }).catch(() => undefined);
-  }
 }
 
 /** Restore state after a background wake and re-arm watchdogs for stuck tabs. */
@@ -318,13 +284,20 @@ export async function armRecording(tabId: number): Promise<ActionResult> {
   let delivered = 0;
   for (const frameId of frameIds) {
     const reply: { ok?: boolean } | undefined = await browser.tabs
-      .sendMessage(tabId, { type: 'ARM_CAPTURE', payload: { bitrate: settings.bitrate } }, { frameId })
+      .sendMessage(
+        tabId,
+        { type: 'ARM_CAPTURE', payload: { bitrate: settings.bitrate } },
+        { frameId },
+      )
       .catch(() => undefined);
     if (reply?.ok) delivered++;
   }
 
   if (delivered === 0) {
-    return { ok: false, error: 'Cannot arm: no capturable frame on this page (try reloading the tab)' };
+    return {
+      ok: false,
+      error: 'Cannot arm: no capturable frame on this page (try reloading the tab)',
+    };
   }
 
   session.setState(tabId, 'armed');
@@ -386,143 +359,17 @@ export async function onArmedStarted(tabId: number, frameId: number): Promise<vo
   }
 }
 
+/**
+ * Persist a finished capture and release the tab. Delegates the storage/export
+ * work to RecordingsService; this wrapper owns only the tab lifecycle -- it
+ * cancels the processing watchdog up front and always clears the tab, even on a
+ * save failure, so a tab can never stay stuck in 'processing'.
+ */
 export async function saveRecording(tabId: number, result: CaptureResult): Promise<void> {
   clearProcessingWatchdog(tabId);
-
-  let url = 'unknown';
-  let title = 'Unknown';
-  let host = 'unknown';
-
   try {
-    const tab = await browser.tabs.get(tabId);
-    url = tab.url ?? 'unknown';
-    title = tab.title ?? 'Unknown';
-    host = new URL(url).hostname;
-  } catch {
-    logger.warn('Could not read tab metadata for', tabId);
-  }
-
-  const metadata: RecordingMetadata = {
-    id: generateId(),
-    sourceUrl: url,
-    sourceHost: host,
-    sourceTitle: title,
-    mimeType: result.mimeType,
-    durationMs: result.durationMs,
-    sizeBytes: result.blob.size,
-    startedAt: result.startedAt,
-    endedAt: result.endedAt,
-  };
-
-  const recording: Recording = { metadata, blob: result.blob };
-
-  try {
-    await repository.save(recording);
-    logger.info('Saved recording', metadata.id, 'from', host);
-
-    const settings = await getSettings();
-
-    if (settings.autoExport) {
-      const exportResult = await exportRecording(recording);
-      if (!exportResult.ok) {
-        logger.warn('Auto-export failed for', metadata.id, ':', exportResult.error);
-      }
-    }
-
-    if (settings.maxRecordings > 0) {
-      await pruneOldRecordings(settings.maxRecordings);
-    }
-  } catch (err) {
-    const quota = err instanceof DOMException && err.name === 'QuotaExceededError';
-    const msg = err instanceof Error ? err.message : String(err);
-    logger.error(
-      quota
-        ? `Save failed: storage quota exceeded (${(metadata.sizeBytes / 1024 / 1024).toFixed(1)} MB). Delete old recordings or lower the bitrate.`
-        : `Save failed for tab ${tabId}: ${msg}`,
-    );
+    await saveCapture(tabId, result);
   } finally {
-    // Always release the tab, even on save failure, so it can't stay stuck.
     clearTab(tabId);
   }
-}
-
-/**
- * Decodes the recording, re-encodes it to the user's chosen export format
- * (WAV/MP3), and triggers a browser download using the template and subfolder
- * settings. The object URL is revoked once the download reaches a terminal
- * state.
- */
-export async function exportRecording(recording: Recording): Promise<ActionResult> {
-  const settings = await getSettings();
-
-  let encoded;
-  try {
-    encoded = await encodeForExport(recording.blob, settings.exportFormat, {
-      mp3Kbps: Math.round(settings.bitrate / 1000),
-    });
-  } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
-    logger.error('Encoding failed:', error);
-    return {
-      ok: false,
-      error: `Could not encode to ${settings.exportFormat.toUpperCase()}: ${error}`,
-    };
-  }
-
-  const filename = applyTemplate(settings.filenameTemplate, recording.metadata, encoded.extension);
-  const path = settings.exportSubfolder.trim()
-    ? `${settings.exportSubfolder.trim()}/${filename}`
-    : filename;
-
-  const url = URL.createObjectURL(encoded.blob);
-
-  try {
-    const downloadId = await browser.downloads.download({
-      url,
-      filename: path,
-      conflictAction: 'uniquify',
-      saveAs: false,
-    });
-
-    if (downloadId == null) {
-      URL.revokeObjectURL(url);
-      return { ok: false, error: 'Download did not start' };
-    }
-
-    type DownloadDelta = Parameters<
-      Parameters<typeof browser.downloads.onChanged.addListener>[0]
-    >[0];
-    const onChanged = (delta: DownloadDelta): void => {
-      if (delta.id !== downloadId) return;
-      const state = delta.state?.current;
-      if (state === 'complete' || state === 'interrupted') {
-        URL.revokeObjectURL(url);
-        browser.downloads.onChanged.removeListener(onChanged);
-      }
-    };
-    browser.downloads.onChanged.addListener(onChanged);
-
-    logger.info('Export queued', recording.metadata.id, '->', path);
-    return { ok: true };
-  } catch (err) {
-    URL.revokeObjectURL(url);
-    const error = err instanceof Error ? err.message : String(err);
-    logger.error('Export failed:', error);
-    return { ok: false, error };
-  }
-}
-
-export async function exportRecordingById(id: string): Promise<ActionResult> {
-  const recording = await repository.getById(id);
-  if (!recording) return { ok: false, error: 'Recording not found' };
-  return exportRecording(recording);
-}
-
-async function pruneOldRecordings(maxKeep: number): Promise<void> {
-  const all = await repository.list(undefined, { field: 'startedAt', direction: 'asc' });
-  const excess = all.length - maxKeep;
-  if (excess <= 0) return;
-  const toDelete = all.slice(0, excess);
-  logger.info(`Cleanup: deleting ${excess} oldest recordings (cap = ${maxKeep})`);
-  await Promise.all(toDelete.map((m) => repository.deleteById(m.id)));
 }

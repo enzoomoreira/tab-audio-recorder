@@ -266,7 +266,8 @@ describe('Orchestrator.stopRecording', () => {
     const orch = await loadOrchestrator({
       getAllFrames: async () => [{ frameId: 0 }, { frameId: 9 }],
       sendMessage: async (_t, msg, opts) => {
-        if (msg.type === 'CHECK_MEDIA') return { found: opts?.frameId === 9, playing: opts?.frameId === 9 };
+        if (msg.type === 'CHECK_MEDIA')
+          return { found: opts?.frameId === 9, playing: opts?.frameId === 9 };
         if (msg.type === 'START_CAPTURE') return { ok: true };
         if (msg.type === 'STOP_CAPTURE') {
           stoppedFrame = opts?.frameId;
@@ -316,96 +317,17 @@ describe('Orchestrator.saveRecording', () => {
     vi.resetModules();
   });
 
-  it('persists the recording and releases the tab', async () => {
+  // The controller's saveRecording owns only the tab lifecycle: it delegates
+  // persistence to RecordingsService (covered in RecordingsService.test.ts) and
+  // then releases the tab. This asserts that integration end to end.
+  it('persists the capture (via RecordingsService) and releases the tab', async () => {
     const orch = await loadOrchestrator({ sendMessage: async () => undefined });
+    const svc = await import('./RecordingsService');
     await orch.saveRecording(7, captureResult());
-    const list = await orch.repository.list();
+    const list = await svc.listRecordings();
     expect(list).toHaveLength(1);
     expect(list[0]?.sourceHost).toBe('example.com');
     expect(orch.getTabState(7)).toBe('idle');
-  });
-
-  it('auto-exports through the downloads API when enabled', async () => {
-    const downloads: { filename: string; conflictAction?: string }[] = [];
-    const orch = await loadOrchestrator({
-      sendMessage: async () => undefined,
-      settings: { autoExport: true },
-      download: async (opts) => {
-        downloads.push(opts);
-        return 1;
-      },
-    });
-    await orch.saveRecording(7, captureResult());
-    expect(downloads).toHaveLength(1);
-    expect(downloads[0]?.filename).toMatch(/example\.com/);
-    // Default format is WAV: the captured WebM is converted on export.
-    expect(downloads[0]?.filename).toMatch(/\.wav$/);
-    expect(downloads[0]?.conflictAction).toBe('uniquify');
-  });
-
-  it('honors the MP3 export format setting', async () => {
-    const downloads: { filename: string }[] = [];
-    const orch = await loadOrchestrator({
-      sendMessage: async () => undefined,
-      settings: { autoExport: true, exportFormat: 'mp3' },
-      download: async (opts) => {
-        downloads.push(opts);
-        return 1;
-      },
-    });
-    await orch.saveRecording(7, captureResult());
-    expect(downloads[0]?.filename).toMatch(/\.mp3$/);
-  });
-
-  it('does not export when autoExport is off', async () => {
-    const downloads: unknown[] = [];
-    const orch = await loadOrchestrator({
-      sendMessage: async () => undefined,
-      download: async (opts) => {
-        downloads.push(opts);
-        return 1;
-      },
-    });
-    await orch.saveRecording(7, captureResult());
-    expect(downloads).toHaveLength(0);
-  });
-
-  it('prunes oldest recordings beyond maxRecordings', async () => {
-    const orch = await loadOrchestrator({
-      sendMessage: async () => undefined,
-      settings: { maxRecordings: 2 },
-    });
-    await orch.saveRecording(1, captureResult({ startedAt: 100, endedAt: 200 }));
-    await orch.saveRecording(2, captureResult({ startedAt: 300, endedAt: 400 }));
-    await orch.saveRecording(3, captureResult({ startedAt: 500, endedAt: 600 }));
-    const list = await orch.repository.list();
-    expect(list).toHaveLength(2);
-    expect(list.map((r) => r.startedAt)).not.toContain(100);
-  });
-});
-
-describe('Orchestrator.exportRecordingById', () => {
-  beforeEach(() => {
-    vi.resetModules();
-  });
-
-  it('exports an existing recording and errors on a missing id', async () => {
-    const downloads: unknown[] = [];
-    const orch = await loadOrchestrator({
-      sendMessage: async () => undefined,
-      download: async (opts) => {
-        downloads.push(opts);
-        return 1;
-      },
-    });
-    await orch.saveRecording(7, captureResult());
-    const [m] = await orch.repository.list();
-    const ok = await orch.exportRecordingById(m!.id);
-    expect(ok.ok).toBe(true);
-    expect(downloads).toHaveLength(1);
-
-    const missing = await orch.exportRecordingById('does-not-exist');
-    expect(missing.ok).toBe(false);
   });
 });
 

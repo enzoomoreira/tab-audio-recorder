@@ -65,7 +65,9 @@ Where to look when you are changing a given concern:
 | Concern                        | File                                                                      |
 | ------------------------------ | ------------------------------------------------------------------------- |
 | Message router (background)    | `src/background/index.ts`                                                 |
-| Recording orchestration        | `src/background/Orchestrator.ts`                                          |
+| Capture orchestration + state  | `src/background/Orchestrator.ts`                                          |
+| Save / export / prune pipeline | `src/background/RecordingsService.ts`                                     |
+| Toolbar badge                  | `src/background/badge.ts`                                                 |
 | Per-tab state + persistence    | `src/shared/SessionState.ts`                                              |
 | Element capture strategy       | `src/content/MediaElementRecorder.ts` + `src/content/MediaElementHook.ts` |
 | Network capture strategy       | `src/content/NetworkRecorder.ts`                                          |
@@ -177,10 +179,10 @@ Orchestrator.stopRecording -> tab 'processing', STOP_CAPTURE -> frame
 Content assembles the Blob, sends RECORDING_COMPLETE { CaptureResult }
         |                                            (content -> background, proactive)
         v
-Orchestrator.saveRecording(tabId, result)
-   |  build RecordingMetadata, Repository.save() to IndexedDB
-   |  if settings.autoExport -> exportRecording() (decode -> WAV/MP3 -> downloads)
-   |  if settings.maxRecordings > 0 -> prune oldest
+Orchestrator.saveRecording(tabId, result)        (owns only the tab lifecycle)
+   |  RecordingsService.saveCapture(): build RecordingMetadata, Repository.save()
+   |     if settings.autoExport -> exportRecording() (decode -> WAV/MP3 -> downloads)
+   |     if settings.maxRecordings > 0 -> prune oldest
    '--> clearTab(tabId)  (always, even on failure)
 ```
 

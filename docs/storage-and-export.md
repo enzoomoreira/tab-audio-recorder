@@ -70,7 +70,7 @@ push sorting into IndexedDB.
 
 Triggered by `EXPORT_RECORDING` from the manager, or automatically after save
 when `settings.autoExport` is on. Orchestrated by `exportRecording`
-(`src/background/Orchestrator.ts:332`). Three stages: transcode, name, download.
+(`src/background/RecordingsService.ts`). Three stages: transcode, name, download.
 
 ### 1. Transcode (`src/shared/AudioEncoder.ts`)
 
@@ -112,7 +112,7 @@ If `settings.exportSubfolder` is set, the filename is prefixed with
 `<subfolder>/`, so downloads land in a subfolder of the browser's Downloads
 directory.
 
-### 3. Download (`src/background/Orchestrator.ts`)
+### 3. Download (`src/background/RecordingsService.ts`)
 
 - `URL.createObjectURL(encoded.blob)` -> `browser.downloads.download` with
   `conflictAction: 'uniquify'` (auto-suffix on name clash) and `saveAs: false`.
