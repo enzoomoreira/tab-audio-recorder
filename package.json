@@ -10,6 +10,7 @@
     "start": "web-ext run --source-dir dist --browser-console",
     "lint:ext": "web-ext lint --source-dir dist",
     "package": "bun run build && web-ext build --source-dir dist --artifacts-dir web-ext-artifacts --overwrite-dest",
+    "package:source": "mkdir -p web-ext-artifacts && git archive --format=zip --prefix=tab-audio-recorder/ -o web-ext-artifacts/tab-audio-recorder-source.zip HEAD",
     "lint": "eslint src",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

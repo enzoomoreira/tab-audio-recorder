@@ -20,6 +20,9 @@ If you are new to the codebase, read in this order:
    machine, surviving an MV3 background suspension, watchdogs, and cleanup.
 5. **[development.md](development.md)** — build, run, test, the test-bridge
    mechanism, and step-by-step change recipes.
+6. **[publishing.md](publishing.md)** — releasing to AMO (addons.mozilla.org):
+   the source-code submission, build instructions for reviewers, and listing
+   metadata.
 
 ## If you are changing X, read Y
 
@@ -33,6 +36,7 @@ If you are new to the codebase, read in this order:
 | A new setting                                   | [development.md](development.md#add-a-setting)                                                           |
 | Build, tests, or the test bridge                | [development.md](development.md)                                                                         |
 | The UI (popup / manager / settings)             | [architecture.md](architecture.md#module-map) (module map)                                               |
+| Releasing / submitting to AMO                   | [publishing.md](publishing.md)                                                                           |
 
 ## Source-of-truth note
 
