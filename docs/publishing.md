@@ -100,9 +100,10 @@ Prepared/owned in the portal, not in this repo.
 new version or triggering another review:
 
 - **Description:** longer-form (the README's Features section is a good base).
-- **Listing icon:** PNG or JPEG at 32x32 and 64x64. Rasterize
-  `src/public/icons/icon.svg` if AMO falls back to a generic icon instead of
-  using the SVG shipped in the package.
+- **Listing icon:** PNG or JPEG at 32x32 and 64x64 — ready to upload at
+  `docs/listing/icon-32.png` and `docs/listing/icon-64.png`, rasterized from
+  `src/public/icons/icon.svg` with transparency preserved. Needed whenever AMO
+  falls back to a generic icon instead of using the SVG shipped in the package.
 - **Screenshots:** 1280x800 (1.6:1), showing the popup, recordings manager, and
   settings.
 - **Support:** email and/or the GitHub repo. **Privacy policy:** unnecessary
