@@ -138,16 +138,6 @@ bun run test:e2e     # builds with the bridge, then runs the Selenium suite
 The `test-pages/` fixtures map one-to-one onto capture paths — see the
 [strategy/test-page map](capture.md#strategy-and-e2e-test-page-map).
 
-### Diagnosing a site that will not record
-
-`scripts/debug/wa-audio-probe.js` is a standalone DevTools probe (paste it into
-the console of the offending page, then play the audio). It reports how the page
-emits sound — attached vs detached media element, MSE vs plain blob, whether the
-audio is routed through Web Audio — and whether `captureStream` can tap it. Those
-are the facts that decide which of the three strategies should have applied, so
-it is the fastest way to turn "site X does not record" into a specific cause. It
-is a manual tool: nothing in the build or the test suites imports it.
-
 **This suite is run locally before a release, not in push/PR CI.** Capture only
 works when a media element actually plays, which needs a real, clocked audio
 output device. GitHub-hosted ubuntu runners no longer provide one (the image
