@@ -2,11 +2,14 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>09 - cross-origin iframe (P2 frame routing)</title>
+    <title>09 - cross-origin iframe (frameId routing)</title>
   </head>
   <body>
     <h1>09 - cross-origin iframe embedding 01</h1>
-    <p>Expected strategy: <strong>DOM via P2 frame routing</strong> (target frame != top)</p>
+    <p>
+      Expected strategy: <strong>1 - media element</strong>, routed by frameId
+      (the capturing frame is not the top one)
+    </p>
     <p>The iframe is loaded from a different origin (different port), so we
        can't reach its window directly -- we send postMessage to it.</p>
     <iframe
@@ -29,8 +32,6 @@
       }
       const frame = document.getElementById('frame');
       if (altBaseUrl) frame.src = `${altBaseUrl}/01-audio-src-direct.html`;
-
-      window.__expected = { strategy: 'DOM', technique: 'iframe-cross-origin' };
 
       window.__startAudio = () => {
         // Cross-origin: cannot touch contentWindow.__startAudio directly.

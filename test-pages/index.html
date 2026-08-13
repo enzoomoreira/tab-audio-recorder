@@ -27,7 +27,11 @@
   </head>
   <body>
     <h1>Tab Audio Recorder - test pages</h1>
-    <p>Each link drives one audio reproduction technique. Used by the E2E suite.</p>
+    <p>
+      Each link drives one audio reproduction technique. Used by the E2E suite.
+      Strategy 2 (network stream) has no page here — it is covered by
+      <code>NetworkRecorder.test.ts</code> in the unit suite.
+    </p>
     <table>
       <thead>
         <tr>
@@ -40,42 +44,52 @@
         <tr>
           <td><a href="01-audio-src-direct.html">01</a></td>
           <td>&lt;audio&gt; with blob WAV src</td>
-          <td>DOM</td>
+          <td>1 - media element</td>
         </tr>
         <tr>
           <td><a href="02-video-with-audio.html">02</a></td>
           <td>&lt;video&gt; with audio (YouTube regression)</td>
-          <td>DOM (strip video track)</td>
+          <td>1 - media element (strip video track)</td>
         </tr>
         <tr>
           <td><a href="03-mse-blob.html">03</a></td>
           <td>&lt;audio&gt; src=blob from MediaSource</td>
-          <td>DOM (captureStream on MSE-fed element)</td>
+          <td>1 - media element (captureStream on MSE-fed element)</td>
         </tr>
         <tr>
           <td><a href="06-webaudio-pure.html">06</a></td>
           <td>OscillatorNode -&gt; destination, no element</td>
-          <td>Web Audio (P3)</td>
+          <td>3 - Web Audio</td>
         </tr>
         <tr>
           <td><a href="07-shadow-dom.html">07</a></td>
           <td>&lt;audio&gt; inside a Shadow DOM</td>
-          <td>DOM via Shadow scan (P1)</td>
+          <td>1 - media element, via the play() hook</td>
         </tr>
         <tr>
           <td><a href="08-iframe-same-origin.html">08</a></td>
           <td>Same-origin iframe embedding 01</td>
-          <td>DOM via iframe scan (P1)</td>
+          <td>1 - media element, in the iframe's frame</td>
         </tr>
         <tr>
           <td>09</td>
           <td>Cross-origin iframe (needs <code>?alt=&lt;urlAlt&gt;</code>)</td>
-          <td>DOM via frame routing (P2)</td>
+          <td>1 - media element, routed by frameId</td>
         </tr>
         <tr>
           <td><a href="13-drm-fake.html">13</a></td>
           <td>&lt;audio&gt; with faked mediaKeys</td>
-          <td>Refused (P4 DRM check)</td>
+          <td>Refused (DRM/EME check)</td>
+        </tr>
+        <tr>
+          <td><a href="14-detached-audio.html">14</a></td>
+          <td>Detached <code>new Audio()</code>, never in the DOM</td>
+          <td>1 - media element, via the play() hook</td>
+        </tr>
+        <tr>
+          <td><a href="15-arm-then-play.html">15</a></td>
+          <td>Arm first, then play</td>
+          <td>1 - media element, armed auto-start</td>
         </tr>
       </tbody>
     </table>

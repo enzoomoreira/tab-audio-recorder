@@ -7,7 +7,10 @@
   </head>
   <body>
     <h1>02 - &lt;video&gt; whose captureStream exposes video + audio tracks</h1>
-    <p>Expected strategy: <strong>DOM</strong> -- with video track stripped before MediaRecorder</p>
+    <p>
+      Expected strategy: <strong>1 - media element</strong> -- with the video
+      track stripped before MediaRecorder
+    </p>
     <p>
       This regression page mirrors the YouTube case: a &lt;video&gt; element
       with a real video track AND a real audio track. The recorder must build
@@ -17,8 +20,6 @@
     <video id="player" autoplay muted playsinline width="320" height="180"></video>
     <button data-testid="start">Start audio</button>
     <script>
-      window.__expected = { strategy: 'DOM', technique: 'video-with-real-av-tracks' };
-
       const video = document.getElementById('player');
       let session = null;
 

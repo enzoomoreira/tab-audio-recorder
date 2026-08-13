@@ -7,12 +7,15 @@
   </head>
   <body>
     <h1>07 - &lt;my-player&gt; with &lt;audio&gt; in shadow root</h1>
-    <p>Expected strategy: <strong>DOM via Shadow DOM scan (P1)</strong></p>
+    <p>Expected strategy: <strong>1 - media element</strong>, reached by the MAIN-world play() hook</p>
+    <p>
+      The element lives in a shadow root, so a DOM walk from the top document
+      would not find it. The hook patches HTMLMediaElement.prototype.play, which
+      fires wherever the element lives -- open or closed shadow root alike.
+    </p>
     <my-player></my-player>
     <button data-testid="start">Start audio</button>
     <script>
-      window.__expected = { strategy: 'DOM', technique: 'shadow-dom-audio' };
-
       class MyPlayer extends HTMLElement {
         constructor() {
           super();

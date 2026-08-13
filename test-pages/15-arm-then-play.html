@@ -7,11 +7,10 @@
   </head>
   <body>
     <h1>15 - arm, then play</h1>
-    <p>Expected strategy: <strong>DOM</strong> (armed auto-start)</p>
+    <p>Expected strategy: <strong>1 - media element</strong>, armed auto-start</p>
     <audio id="player" controls></audio>
     <button data-testid="start">Start audio</button>
     <script>
-      window.__expected = { strategy: 'DOM', technique: 'arm-then-play' };
       const player = document.getElementById('player');
       player.src = window.sineWavUrl(10, 440);
       player.loop = true;

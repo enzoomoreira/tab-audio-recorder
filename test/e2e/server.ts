@@ -22,7 +22,7 @@ export interface StaticServer {
   url: string;
   /**
    * Second server on a different port, used as a cross-origin host (e.g. to
-   * iframe a page from `url` and observe the P2 frameId routing).
+   * iframe a page from `url` and observe the frameId routing).
    * Different port = different origin per Same-Origin Policy.
    */
   urlAlt: string;

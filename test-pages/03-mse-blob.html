@@ -6,7 +6,7 @@
   </head>
   <body>
     <h1>03 - &lt;audio src="blob:..."&gt; fed by MediaSource API</h1>
-    <p>Expected strategy: <strong>DOM</strong> (captureStream on MSE-fed element)</p>
+    <p>Expected strategy: <strong>1 - media element</strong> (captureStream on an MSE-fed element)</p>
     <p>
       Mirrors YouTube/SoundCloud: an audio element whose src is a blob URL
       backed by MediaSource. Append a bundled opus-in-webm file via SourceBuffer.
@@ -15,8 +15,6 @@
     <button data-testid="start">Start audio</button>
     <p id="status">loading...</p>
     <script>
-      window.__expected = { strategy: 'DOM', technique: 'mse-blob-source' };
-
       const player = document.getElementById('player');
       const status = document.getElementById('status');
       const MIME = 'audio/webm; codecs="opus"';

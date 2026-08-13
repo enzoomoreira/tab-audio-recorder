@@ -7,11 +7,10 @@
   </head>
   <body>
     <h1>01 - &lt;audio src=&quot;blob:wav&quot;&gt; direct</h1>
-    <p>Expected strategy: <strong>DOM</strong></p>
+    <p>Expected strategy: <strong>1 - media element</strong> (captureStream)</p>
     <audio id="player" controls></audio>
     <button data-testid="start">Start audio</button>
     <script>
-      window.__expected = { strategy: 'DOM', technique: 'audio-src-direct' };
       const player = document.getElementById('player');
       player.src = window.sineWavUrl(10, 440);
       player.loop = true;

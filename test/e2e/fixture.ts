@@ -29,7 +29,9 @@ export async function launchDriver(baseUrl: string, altUrl: string): Promise<E2E
   }
 
   const options = new FirefoxOptions();
-  // Run headed for a11y/popup testing; switch to .addArguments('-headless') for CI.
+  // Headed on purpose: capture only yields data while audio really plays, which
+  // needs a real window and audio device. CI supplies a virtual display through
+  // xvfb rather than switching this to '-headless'.
   options.setPreference('xpinstall.signatures.required', false);
   options.setPreference('extensions.experiments.enabled', true);
   // Allow programmatic .play() without user gesture (tests trigger audio via JS).

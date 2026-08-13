@@ -54,7 +54,7 @@ describe('E2E capture per technique', () => {
     return waitForRecording(ctx.driver);
   }
 
-  it('01 - <audio src="blob:wav"> captures via DOM strategy', async () => {
+  it('01 - <audio src="blob:wav"> captures via the media-element strategy', async () => {
     const result = await captureFor('01-audio-src-direct.html');
     expect(result).not.toBeNull();
     expect(result?.lastSize).toBeGreaterThan(0);
@@ -72,25 +72,25 @@ describe('E2E capture per technique', () => {
     expect(result?.lastSize).toBeGreaterThan(0);
   }, 60_000);
 
-  it('06 - Web Audio pure (OscillatorNode) captures via P3 hook', async () => {
+  it('06 - Web Audio pure (OscillatorNode) captures via the AudioContext hook', async () => {
     const result = await captureFor('06-webaudio-pure.html');
     expect(result).not.toBeNull();
     expect(result?.lastSize).toBeGreaterThan(0);
   }, 60_000);
 
-  it('07 - <audio> inside Shadow DOM is found by P1 recursive scan', async () => {
+  it('07 - <audio> inside Shadow DOM is caught by the play() hook', async () => {
     const result = await captureFor('07-shadow-dom.html');
     expect(result).not.toBeNull();
     expect(result?.lastSize).toBeGreaterThan(0);
   }, 60_000);
 
-  it('08 - <audio> in same-origin iframe is found by P1 recursive scan', async () => {
+  it('08 - <audio> in same-origin iframe is caught by the play() hook', async () => {
     const result = await captureFor('08-iframe-same-origin.html');
     expect(result).not.toBeNull();
     expect(result?.lastSize).toBeGreaterThan(0);
   }, 60_000);
 
-  it('03 - <audio> fed by MediaSource captures via DOM strategy', async () => {
+  it('03 - <audio> fed by MediaSource captures via the media-element strategy', async () => {
     await ctx.driver.get(`${ctx.baseUrl}/03-mse-blob.html`);
     // Wait for the bundled sample.webm to fetch + appendBuffer to settle.
     const deadline = Date.now() + 10_000;
@@ -111,7 +111,7 @@ describe('E2E capture per technique', () => {
     expect(result?.lastSize).toBeGreaterThan(0);
   }, 60_000);
 
-  it('13 - <audio> with faked mediaKeys is refused (P4 DRM detection)', async () => {
+  it('13 - <audio> with faked mediaKeys is refused (DRM/EME detection)', async () => {
     await ctx.driver.get(`${ctx.baseUrl}/13-drm-fake.html`);
     await ctx.driver.findElement(By.css('[data-testid="start"]')).click();
     await new Promise((r) => setTimeout(r, 500));
@@ -138,7 +138,7 @@ describe('E2E capture per technique', () => {
     expect(result?.lastSize).toBeGreaterThan(0);
   }, 60_000);
 
-  it('09 - <audio> in cross-origin iframe found by P2 frameId routing', async () => {
+  it('09 - <audio> in cross-origin iframe found by frameId routing', async () => {
     // Top frame at baseUrl, iframe loaded from urlAlt -- different origin.
     const url = `${ctx.baseUrl}/09-iframe-cross-origin.html?alt=${encodeURIComponent(ctx.altUrl)}`;
     await ctx.driver.get(url);
