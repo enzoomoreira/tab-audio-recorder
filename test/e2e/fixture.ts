@@ -30,7 +30,6 @@ export async function launchDriver(baseUrl: string, altUrl: string): Promise<E2E
 
   const options = new FirefoxOptions();
   // Run headed for a11y/popup testing; switch to .addArguments('-headless') for CI.
-  options.addArguments('-remote-allow-system-access'); // chrome-context execute (UUID discovery)
   options.setPreference('xpinstall.signatures.required', false);
   options.setPreference('extensions.experiments.enabled', true);
   // Allow programmatic .play() without user gesture (tests trigger audio via JS).
@@ -43,7 +42,10 @@ export async function launchDriver(baseUrl: string, altUrl: string): Promise<E2E
   // log buffer, which only covers the background context).
   options.setPreference('devtools.console.stdout.content', true);
 
-  const service = new ServiceBuilder(geckoDriverPath);
+  // Chrome-context execute (UUID discovery) needs system access. geckodriver
+  // 0.37.1 dropped support for Firefox's --remote-allow-system-access via
+  // moz:firefoxOptions; the grant now belongs to the geckodriver process.
+  const service = new ServiceBuilder(geckoDriverPath).addArguments('--allow-system-access');
 
   const driver = await new Builder()
     .forBrowser('firefox')

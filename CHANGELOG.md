@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- E2E suite runs again on geckodriver 0.37.1, which dropped support for setting
+  Firefox's `--remote-allow-system-access` through `moz:firefoxOptions`. The
+  chrome-context grant the UUID discovery depends on now goes to the geckodriver
+  process as `--allow-system-access`.
+
 ## [0.1.1] - 2026-06-17
 
 ### Added
