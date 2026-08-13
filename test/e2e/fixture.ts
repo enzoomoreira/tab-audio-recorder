@@ -11,7 +11,7 @@ const DIST_DIR = resolve(REPO_ROOT, 'dist');
 
 // Must match browser_specific_settings.gecko.id in src/manifest.json — the e2e
 // helpers discover the per-profile UUID via WebExtensionPolicy.getByID(EXT_ID).
-export const EXT_ID = '{7f9db6f3-3bfb-413b-b898-17f20d09e4df}';
+export const EXT_ID = '{85d5f6d2-781f-4d99-bc63-921882f36523}';
 
 export interface E2EContext {
   driver: WebDriver;
