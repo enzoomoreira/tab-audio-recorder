@@ -5,6 +5,16 @@ How to publish Tab Audio Recorder to the official Firefox Add-ons store as a
 auto-updates installed copies). This is the supported path — not self-distribution
 (unlisted), which would need an `update_url` the manifest deliberately omits.
 
+The live listing is <https://addons.mozilla.org/firefox/addon/tab-audio-rec/>.
+
+> **Never delete a submission to start over.** AMO permanently deny-lists the
+> GUID of any deleted add-on, so `browser_specific_settings.gecko.id` can never
+> be reused — the deny-list exists so nobody can hijack a deleted add-on's update
+> path. The block only surfaces at upload time, as a duplicate-add-on-ID
+> rejection. Recovering means regenerating the GUID in `src/manifest.json` plus
+> the matching `EXT_ID` in `test/e2e/fixture.ts`. The slug is retained the same
+> way: `tab-audio-recorder` was burned like this, hence `tab-audio-rec`.
+
 ## Why a source-code submission is required
 
 The packaged extension is **bundled and transpiled** with Vite (the shipped
@@ -79,18 +89,24 @@ manual review, so justify the surface explicitly:
 
 ## 4. Listing assets and metadata (AMO Developer Hub)
 
-Prepared/owned in the portal, not in this repo:
+Prepared/owned in the portal, not in this repo.
 
-- **Listing icon:** PNG or JPEG at **32x32 and 64x64** — AMO does **not** accept
-  SVG for the listing icon (the SVG in the manifest is fine for the runtime).
-  Rasterize `src/public/icons/icon.svg` to those sizes.
+**Required** — AMO will not create a listed add-on without these:
+
+- **Name**, **summary** (≤ 250 characters), and **categories** (up to 2).
+- **License:** ISC (matches `LICENSE`).
+
+**Optional** — addable at any time from the Developer Hub, without submitting a
+new version or triggering another review:
+
+- **Description:** longer-form (the README's Features section is a good base).
+- **Listing icon:** PNG or JPEG at 32x32 and 64x64. Rasterize
+  `src/public/icons/icon.svg` if AMO falls back to a generic icon instead of
+  using the SVG shipped in the package.
 - **Screenshots:** 1280x800 (1.6:1), showing the popup, recordings manager, and
   settings.
-- **Summary:** ≤ 250 characters. **Description:** longer-form (the README's
-  Features section is a good base).
-- **Categories:** up to 2. **Support:** email and/or the GitHub repo.
-- **License:** ISC (matches `LICENSE`). **Privacy policy:** optional here because
-  data collection is `none`; linking one is still good practice.
+- **Support:** email and/or the GitHub repo. **Privacy policy:** unnecessary
+  here because data collection is `none`.
 
 ## 5. Submit
 
@@ -104,6 +120,26 @@ Prepared/owned in the portal, not in this repo:
 4. Fill in the listing metadata (section 4) and the reviewer notes (section 3).
 5. Submit. Signing/publishing is usually within ~24h, longer if selected for
    manual review.
+
+A listed add-on's public page 404s for anonymous visitors until the review
+clears; the author still sees it while signed in, so "the page is up for me" is
+not evidence that it is live.
+
+## 6. Tag the GitHub release
+
+Cut the release **after** the commit that produced the uploaded zip. The tag is
+the record of exactly what AMO received, and `package:source` archives `HEAD`, so
+a tag left behind on an earlier commit ships different code than the reviewer
+rebuilt.
+
+```bash
+git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z
+gh release create vX.Y.Z --notes-from-tag
+```
+
+Do not attach a built `.xpi` or zip to the release. The only signed copies come
+from AMO; an unsigned artifact next to a store listing invites people to sideload
+something Firefox will refuse to install anyway.
 
 Bump `version` in both `package.json` and `src/manifest.json` before each new
 submission — AMO rejects re-uploading an existing version.

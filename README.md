@@ -1,9 +1,16 @@
 # Tab Audio Recorder
 
+[![CI](https://github.com/enzoomoreira/tab-audio-recorder/actions/workflows/ci.yml/badge.svg)](https://github.com/enzoomoreira/tab-audio-recorder/actions/workflows/ci.yml)
+
 A Firefox (Manifest V3) extension that records the audio playing in a browser
 tab and saves it locally for sampling. It captures from regular `<audio>` /
 `<video>` elements, raw network audio streams (e.g. web radios), and pages that
 synthesize sound through the Web Audio API.
+
+## Install
+
+[**Get it on Firefox Add-ons**](https://addons.mozilla.org/firefox/addon/tab-audio-rec/)
+— requires Firefox 142 or newer.
 
 ## Features
 
@@ -35,7 +42,7 @@ synthesize sound through the Web Audio API.
 - **DRM-aware**: EME/DRM-protected playback is detected and refused up front
   instead of saving silence.
 
-## Install (development)
+## Build from source
 
 Requires [Bun](https://bun.sh) and Firefox.
 
