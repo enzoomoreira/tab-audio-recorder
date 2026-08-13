@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (persistence/export/prune, owning the IndexedDB layer), and a `badge` module;
   extracted a shared content `pageBridge` helper and the app's `recordingCard`
   builder; and added a typed `sendToBackground` message wrapper.
+- Regenerated `browser_specific_settings.gecko.id` (and the matching `EXT_ID` in
+  the E2E fixture). AMO permanently deny-lists the GUID of a deleted submission,
+  so the original ID could never be uploaded again — see `docs/publishing.md`.
 
 ### Fixed
 
