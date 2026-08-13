@@ -64,8 +64,13 @@ record/arm/stop by dispatching a `tab-audio-recorder-cmd` custom event
 (`START` / `STOP` / `ARM`), and exposes `TEST_GET_LOGS` to read the background's
 diagnostic log buffer. It must never
 ship in production, or any localhost page could start a silent capture. The
-double guard — build-time strip **and** a runtime hostname check — means
-production has no bridge code at all.
+double guard — build-time strip **and** a runtime hostname check — means the
+production build carries no bridge behavior. The content side is stripped
+whole (no `tab-audio-recorder-cmd` listener); in the background bundle the four
+`TEST_*` switch cases survive only as empty labels that return `undefined`,
+exactly like `default` — the handler bodies, and `getLogBuffer` with them, are
+gone. Grepping `dist/` for `TEST_` therefore returns four inert hits, not a
+leaked bridge.
 
 ## Testing
 
@@ -118,17 +123,30 @@ bun run test:e2e     # builds with the bridge, then runs the Selenium suite
   through the app page's runtime messaging. On a failed test, `dumpDiagnostics`
   saves a screenshot to `e2e-artifacts/` and prints the background log buffer
   (via `TEST_GET_LOGS`) so a red test shows _why_, not just "got null".
-- `test/e2e/globalSetup.ts` reaps leaked browser processes after the run. On
+- `test/e2e/globalSetup.ts` reaps leaked geckodriver processes after the run. On
   Windows, selenium's `driver.quit()` does not reliably kill the geckodriver child
   (mozilla/geckodriver#1220); orphans accumulate and make a later run hang in
-  `Builder.build()`. The hook snapshots geckodriver/firefox PIDs before the suite
-  and kills only the ones it started, so `bun run test:e2e` self-cleans for any
-  dev. (It cannot run if vitest is hard-killed with Ctrl-C — then clear leftovers
-  manually.) A full run takes ~95s (10 capture cases × up to 60s each); that is
-  normal, not a freeze.
+  `Builder.build()`. The hook snapshots geckodriver PIDs before the suite and
+  kills only the ones it started, so `bun run test:e2e` self-cleans for any dev.
+  Firefox is never matched by name — `taskkill /T` takes the test's child browser
+  down with its geckodriver, and matching `firefox.exe` would also kill a window
+  the dev opened during the run. (The hook cannot run if vitest is hard-killed
+  with Ctrl-C — then clear leftovers manually.) A full run takes ~70-95s
+  depending on the machine (10 capture cases × up to 60s each); that is normal,
+  not a freeze.
 
 The `test-pages/` fixtures map one-to-one onto capture paths — see the
 [strategy/test-page map](capture.md#strategy-and-e2e-test-page-map).
+
+### Diagnosing a site that will not record
+
+`scripts/debug/wa-audio-probe.js` is a standalone DevTools probe (paste it into
+the console of the offending page, then play the audio). It reports how the page
+emits sound — attached vs detached media element, MSE vs plain blob, whether the
+audio is routed through Web Audio — and whether `captureStream` can tap it. Those
+are the facts that decide which of the three strategies should have applied, so
+it is the fastest way to turn "site X does not record" into a specific cause. It
+is a manual tool: nothing in the build or the test suites imports it.
 
 **This suite is run locally before a release, not in push/PR CI.** Capture only
 works when a media element actually plays, which needs a real, clocked audio

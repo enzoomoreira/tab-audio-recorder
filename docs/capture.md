@@ -8,7 +8,7 @@ fallback for the previous one. This document explains the order, what each
 strategy needs, and the per-strategy implementation details.
 
 The selection logic lives in `Orchestrator.startRecording`
-(`src/background/Orchestrator.ts:144`). The actual capture runs in the content
+(`src/background/Orchestrator.ts`). The actual capture runs in the content
 script (`src/content/index.ts`), which instantiates one of the three recorder
 classes.
 

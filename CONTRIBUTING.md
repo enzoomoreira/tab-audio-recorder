@@ -45,7 +45,7 @@ The end-to-end Selenium suite is heavier and needs Firefox:
 bun run test:e2e      # builds with the test bridge, then runs Selenium
 ```
 
-A full E2E run takes ~95s (it launches Firefox and exercises every capture
+A full E2E run takes ~70-95s (it launches Firefox and exercises every capture
 strategy). On Windows, leaked `geckodriver` processes are reaped automatically by
 `test/e2e/globalSetup.ts`; if you hard-kill the run (Ctrl-C), clear any leftovers
 with `Stop-Process -Name geckodriver,firefox -Force`.
