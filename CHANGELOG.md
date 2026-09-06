@@ -1,5 +1,28 @@
 # Changelog
 
+## [2026-09-06 10:40]
+
+### Fixed
+
+- Recordings refresh while visible and when revisiting the manager, updating
+  capture status without resetting unchanged audio players.
+- Network capture waits for a valid response and initial stream data before
+  reporting success; startup failures allow the next capture strategy to run.
+- HLS/M3U playlists are excluded from raw network capture instead of being saved
+  as audio files.
+- Web Audio selection ignores idle or suspended contexts and rejects ambiguous
+  multiple connected contexts instead of arbitrarily recording the first one.
+- Export settings reject invalid download subfolders, and filename rendering
+  removes leading dots; preview and downloads share the same path policy.
+- Failed recording actions persist their error for the popup and show a toolbar
+  error badge, including actions started through the keyboard shortcut.
+
+### Changed
+
+- WAV/MP3 encoding runs in a dedicated Worker, with decoding and conversion
+  serialized to one job at a time. Original exports bypass this queue. Conversion
+  still decodes the full recording and can consume substantial memory.
+
 ## [2026-09-06 09:34]
 
 ### Added

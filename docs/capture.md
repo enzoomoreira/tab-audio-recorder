@@ -175,6 +175,11 @@ the first frame that has one.
 
 ### NetworkRecorder (`src/content/NetworkRecorder.ts`)
 
+- `start()` waits for a successful response with a readable body and its first
+  data read, with a 10-second initialization deadline. Startup failure rejects
+  the attempt so the orchestrator can continue to Web Audio. Response MIME types
+  and redirected URLs are also checked for playlists; this recorder does not
+  fetch or assemble HLS segments.
 - `fetch(url, { signal })` with an `AbortController`; response chunks are split
   into pieces of at most 1 MiB, written through `ChunkSink`, and acknowledged
   before reading further. No full-recording byte array is retained by this class.
@@ -184,8 +189,8 @@ the first frame that has one.
   `application/octet-stream`; otherwise it is guessed from the URL extension
   (`.ogg`/`.opus` -> `audio/ogg`, `.aac` -> `audio/aac`, `.webm` -> `audio/webm`,
   else `audio/mpeg`). Unknown original-export MIME types fail explicitly.
-- A failed or interrupted fetch (non-OK status, network error) fires `onError`;
-  a normal abort from `stop()` is silent.
+- A network/storage failure after startup fires `onError`; startup failures reject
+  `start()` directly. A normal abort from `stop()` is silent.
 
 This strategy records the raw stream bytes as delivered — it does not go through
 `MediaRecorder`.
@@ -212,7 +217,13 @@ graph. It is fully self-contained (no imports, no `browser.*`). What it does:
   (DAWs, sequencers) keep the tap in sync with what the user actually hears.
 - **Wraps the `AudioContext` / `webkitAudioContext` constructors** so every
   context the page creates is tracked in a set.
-- On `START`, it picks a running context (or any context), builds a
+- Tracks successful mirrored output connections, including duplicate connects
+  and disconnect overloads. Only running contexts with such connections qualify;
+  a context that exists but has no output connection is ignored. Multiple eligible
+  contexts fail with an explicit ambiguity error rather than selecting one
+  arbitrarily. A connected graph can still be silent; this is not a signal-level
+  detector or a mixer between contexts.
+- On `START`, it uses the single eligible context, builds a
   `MediaRecorder` over the tap's stream, and records — same MIME selection and
   periodic chunk requests and bounded acknowledgment queue as the element hook.
 
@@ -229,8 +240,9 @@ the MAIN world directly, it speaks a small `window.postMessage` protocol:
 | `CHUNK_ACK { captureId, sequence, ok, error? }` | `CHUNK { captureId, sequence, blob, startedAt, endedAt }` |
 | (passive listen)                                | `ERROR { error }` (spontaneous mid-capture)               |
 
-- `probe()` (1s timeout) checks whether the page created any `AudioContext` at
-  all — if not, the strategy is skipped without error.
+- `probe()` (1s timeout) checks for running contexts with mirrored output
+  connections. With none, the strategy is skipped without error; ambiguity is
+  reported by `start()`.
 - `start()` / `stop()` wait for the matching reply (10s timeout). The shared
   `ChunkSink` stores ordered chunks during recording; Stop validates the session
   ID and drains the sink before returning completion metadata.

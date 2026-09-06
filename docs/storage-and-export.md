@@ -108,17 +108,21 @@ Recordings, but auto-export failed"; the stored recording is retained.
 ### 1. Preserve or convert (`src/shared/AudioEncoder.ts`)
 
 `encodeForExport(blob, format, opts)` preserves Original exports or converts WAV/MP3.
-It runs in the **background** event page, which is why both
-manual and auto-export honor the format setting (Firefox MV3 retains Web Audio
-there).
+The **background** event page coordinates both manual and auto-export, including
+Web Audio decoding. WAV/MP3 PCM encoding runs in a dedicated Worker
+(`EncodingWorker.ts`, `encoding.worker.ts`, `PcmEncoder.ts`), so its synchronous
+encoding loops do not block capture message handling. The Worker is terminated
+on completion or failure.
 
 - **Original** returns the same Blob without `arrayBuffer()` or decoding. Its
   extension comes from the actual MIME type (WebM, Ogg, MP3, AAC, MP4/M4A, WAV,
   FLAC); unknown MIME types fail explicitly rather than receive a guessed extension.
   This is the default for new/reset settings; stored user choices are preserved.
+  Original exports also bypass the conversion queue.
 - **Decode for WAV/MP3.** `AudioContext.decodeAudioData` turns the audio blob into PCM.
   `arrayBuffer()` is read fresh each call because `decodeAudioData` detaches the
-  buffer.
+  buffer. Decoding and encoding share a serial queue, so only one conversion job
+  runs at a time; a failed job does not prevent subsequent jobs from running.
 - **WAV** (`encodeWav`): writes a 16-bit little-endian RIFF/WAVE stream directly
   from the PCM channels. Lossless, larger files.
 - **MP3** (`encodeMp3`): uses `@breezystack/lamejs`. Encodes in 1152-sample
@@ -130,7 +134,8 @@ there).
 
 WAV/MP3 still decode the entire recording and allocate encoding buffers; MP3's
 block loop does not make this a bounded-memory converter. Recommend Original for
-long recordings. No worker-based or streaming transcoder is implemented.
+long recordings. Worker isolation does not make conversion a streaming or
+bounded-memory operation.
 
 Format metadata (mime type, extension, label) lives in `src/shared/exportFormats.ts`
 (`FORMAT_META`, `EXPORT_FORMAT_LABELS`, `originalExtension`), separate from the encoder so the settings page can
@@ -144,7 +149,8 @@ the user's template string.
 - **Variables:** `{host}`, `{title}`, `{date}` (YYYY-MM-DD), `{time}` (HH-MM-SS),
   `{timestamp}` (epoch ms). Default template: `{host}_{date}_{time}`.
 - Each substituted value is sanitized (filesystem-invalid chars -> `_`), the full
-  basename is truncated to 200 chars, and the format's extension is appended.
+  basename is truncated to 200 chars, leading dots and trailing dots/spaces are
+  removed, and the format's extension is appended.
 - Falls back to `recording.<ext>` if substitution yields an empty string.
 - `validateTemplate` is used by the settings UI to reject an empty template or
   one with no recognized variable (the live preview shows the result).
@@ -152,6 +158,10 @@ the user's template string.
 If `settings.exportSubfolder` is set, the filename is prefixed with
 `<subfolder>/`, so downloads land in a subfolder of the browser's Downloads
 directory.
+`validateSubfolder` rejects absolute paths, empty/dot-prefixed segments and invalid
+filename characters before settings are saved. `buildDownloadPath` shares this
+policy between the live preview and actual downloads; existing invalid settings
+also fail explicitly at export time.
 
 ### 3. Download (`src/background/RecordingsService.ts`)
 
@@ -207,6 +217,10 @@ cached URLs on `pagehide` and when a recording is deleted. See the player's
 lazy-load notes inline in `AudioPlayer.ts`.
 Pending blob loads are invalidated when a player is destroyed, and failed loads
 can be retried. The list discards outdated responses after a newer filter request.
+The visible recordings section refreshes every two seconds and on focus,
+visibility or section changes. Existing cards keep their player instances when
+their metadata is unchanged, so refreshes do not restart playback; changed capture
+metadata updates size, status and available actions.
 
 Settings changes are queued in order. Reset cancels pending debounce work and
 runs after any in-flight save; storage failures remain visible in the settings view.

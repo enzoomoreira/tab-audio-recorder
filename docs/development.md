@@ -232,8 +232,10 @@ each common change. File paths are the source of truth; line numbers drift.
 1. **Format metadata** — add the key to `ExportFormat` in `src/types/index.ts`
    and entries to `FORMAT_META`, `EXPORT_FORMAT_LABELS` and `EXPORT_FORMATS` in
    `src/shared/exportFormats.ts` (MIME type, extension, label).
-2. **Encoder** — add an `encode<X>(pcm, ...)` in `src/shared/AudioEncoder.ts` and
-   a branch in `encodeForExport` that decodes and calls it.
+2. **Encoder** — add an `encode<X>(pcm, ...)` in `src/shared/PcmEncoder.ts`, extend
+   the Worker request types and dispatch in `encoding.worker.ts`, and update
+   `AudioEncoder.ts` if the format requires different decoding options. Keep CPU
+   encoding in the Worker and conversion inside the shared serial queue.
 3. The settings dropdown and filename preview pick up the new format
    automatically from the format metadata. Original is a pass-through option,
    with its extension selected by `originalExtension` from the actual MIME type;

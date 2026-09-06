@@ -157,6 +157,10 @@ and [MDN alarms](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExt
 `toggleRecording` on the active tab — the exact same entry point as the popup
 button, so the hotkey records, arms, disarms, or stops by state with no separate
 code path. The listener lives in the background, so it works with the popup closed.
+Failed actions that leave the tab idle persist their error in session state and
+show a red `!` toolbar badge. Opening the popup exposes the same error even when
+the failure originated from the keyboard shortcut. Capture/save failures use this
+badge as well; successfully entering armed/recording state clears the previous error.
 
 ## Settings propagation
 

@@ -18,12 +18,15 @@ runs (and therefore what it can and cannot do):
 | `src/content/`    | Content scripts (per frame)            | Most APIs (messaging, storage) | Page DOM (ISOLATED + MAIN) |
 | `src/popup/`      | Browser-action popup page              | Full                           | Its own document           |
 | `src/app/`        | Unified recordings + settings tab      | Full                           | Its own document           |
-| `src/shared/`     | Plain modules imported by the above    | Depends on importer            | n/a                        |
+| `src/shared/`     | Shared modules and encoding Worker     | Depends on execution context   | n/a                        |
 | `src/types/`      | Type-only declarations                 | n/a                            | n/a                        |
 
 The background is the single source of truth: it owns recording state, runs the
 capture-strategy selection, and is the only realm that writes to the database.
 Everything else is a thin surface that sends it messages.
+The background starts a dedicated Worker for WAV/MP3 PCM encoding and transfers
+channel buffers to it. One conversion runs at a time; the Worker returns encoded
+bytes without accessing extension storage or capture state.
 
 ## Manifest wiring
 
@@ -76,6 +79,7 @@ Where to look when you are changing a given concern:
 | Ordered chunk writes + acknowledgments | `src/content/ChunkSink.ts`                                                      |
 | Persistence (IndexedDB)                | `src/shared/Repository.ts`                                                      |
 | Original export / WAV/MP3 conversion   | `src/shared/AudioEncoder.ts`                                                    |
+| Worker encoding bridge / PCM encoders | `src/shared/EncodingWorker.ts` + `src/shared/encoding.worker.ts` + `src/shared/PcmEncoder.ts` |
 | Export filename rendering              | `src/shared/FilenameTemplate.ts`                                                |
 | Settings model + storage               | `src/shared/Settings.ts`                                                        |
 | Logging                                | `src/shared/Logger.ts`                                                          |
