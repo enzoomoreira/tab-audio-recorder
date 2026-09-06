@@ -35,17 +35,26 @@ export async function encodeForExport(
     return { blob, mimeType: blob.type, extension: originalExtension(blob.type) };
   }
   const job = conversionQueue.then(async (): Promise<EncodedAudio> => {
-    let pcm = await decodeAudio(blob);
-    if (format === 'mp3' && !MP3_SAMPLE_RATES.has(pcm.sampleRate)) {
-      pcm = await decodeAudio(blob, 44100);
+    // A Worker does not keep Firefox's event page alive after its views close.
+    // API activity extends its idle deadline only while this conversion runs.
+    const activity = setInterval((): void => {
+      void browser.runtime.getPlatformInfo().catch((): void => {});
+    }, 20_000);
+    try {
+      let pcm = await decodeAudio(blob);
+      if (format === 'mp3' && !MP3_SAMPLE_RATES.has(pcm.sampleRate)) {
+        pcm = await decodeAudio(blob, 44100);
+      }
+      const bytes = await encodeInWorker(
+        pcm,
+        format,
+        Math.max(8, Math.min(320, Math.round(opts.mp3Kbps ?? 128))),
+      );
+      const { mimeType, extension } = FORMAT_META[format];
+      return { blob: new Blob([bytes], { type: mimeType }), mimeType, extension };
+    } finally {
+      clearInterval(activity);
     }
-    const bytes = await encodeInWorker(
-      pcm,
-      format,
-      Math.max(8, Math.min(320, Math.round(opts.mp3Kbps ?? 128))),
-    );
-    const { mimeType, extension } = FORMAT_META[format];
-    return { blob: new Blob([bytes], { type: mimeType }), mimeType, extension };
   });
   conversionQueue = job.then(
     (): void => {},
