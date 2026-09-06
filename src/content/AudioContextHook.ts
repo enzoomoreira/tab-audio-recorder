@@ -12,6 +12,16 @@
 
   const taps = new WeakMap<AudioContext, MediaStreamAudioDestinationNode>();
   const allContexts = new Set<AudioContext>();
+  const mirroredOutputs = new WeakMap<AudioNode, Set<number>>();
+  const connectionCounts = new WeakMap<BaseAudioContext, number>();
+
+  function removeOutputs(node: AudioNode, output?: number): void {
+    const outputs = mirroredOutputs.get(node);
+    if (!outputs) return;
+    const removed = output === undefined ? outputs.size : Number(outputs.delete(output));
+    if (output === undefined) outputs.clear();
+    connectionCounts.set(node.context, (connectionCounts.get(node.context) ?? 0) - removed);
+  }
 
   function getTap(ctx: AudioContext): MediaStreamAudioDestinationNode {
     let tap = taps.get(ctx);
@@ -49,6 +59,17 @@
         const tapArgs: unknown[] = [tap];
         if (output !== undefined) tapArgs.push(output);
         apply(OrigConnect, this, tapArgs);
+        let outputs = mirroredOutputs.get(this);
+        if (!outputs) {
+          outputs = new Set();
+          mirroredOutputs.set(this, outputs);
+        }
+        const index = output ?? 0;
+        // Repeated connections to the same output/input are idempotent.
+        if (!outputs.has(index)) {
+          outputs.add(index);
+          connectionCounts.set(this.context, (connectionCounts.get(this.context) ?? 0) + 1);
+        }
       }
     } catch {
       // Mirroring must never break the page audio graph.
@@ -62,13 +83,17 @@
   type DisconnectFn = (this: AudioNode, ...args: unknown[]) => void;
   const wrappedDisconnect: DisconnectFn = function (this, ...args) {
     apply(OrigDisconnect, this, args);
+    const first = args[0];
+    if (args.length === 0) removeOutputs(this);
+    else if (typeof first === 'number') removeOutputs(this, first);
+    else if (first instanceof AudioDestinationNode)
+      removeOutputs(this, typeof args[1] === 'number' ? args[1] : undefined);
     try {
       // Cases that already cover the tap implicitly:
       //   disconnect()                      -- removes all outgoing, including tap
       //   disconnect(outputNumber)          -- removes everything from that output, including tap
       // Cases that need an explicit mirror:
       //   disconnect(destination[, output[, input]])
-      const first = args[0];
       if (first instanceof AudioDestinationNode) {
         const tap = taps.get(first.context as AudioContext);
         if (tap) {
@@ -152,15 +177,15 @@
   let mimeType = '';
   let stoppedAt = 0;
 
-  function pickContext(): AudioContext | null {
+  function connectedContexts(): AudioContext[] {
     for (const ctx of allContexts) {
       if (ctx.state === 'closed') allContexts.delete(ctx);
     }
-    for (const ctx of allContexts) {
-      if (ctx.state === 'running') return ctx;
-    }
-    for (const ctx of allContexts) return ctx;
-    return null;
+    // Running alone does not imply a graph connected to the speaker output.
+    // Connections establish eligibility, not proof that the signal is non-silent.
+    return [...allContexts].filter(
+      (ctx) => ctx.state === 'running' && (connectionCounts.get(ctx) ?? 0) > 0,
+    );
   }
 
   function pickMimeType(): string {
@@ -205,7 +230,7 @@
     }
 
     if (data.type === 'PROBE') {
-      reply({ type: 'PROBE_RESULT', hasContexts: pickContext() !== null });
+      reply({ type: 'PROBE_RESULT', hasContexts: connectedContexts().length > 0 });
       return;
     }
 
@@ -232,13 +257,17 @@
         });
         return;
       }
-      const ctx = pickContext();
-      if (!ctx) {
+      const contexts = connectedContexts();
+      const ctx = contexts[0];
+      if (!ctx || contexts.length !== 1) {
         reply({
           type: 'STARTED',
           captureId: data.captureId,
           ok: false,
-          error: 'No AudioContext detected',
+          error:
+            contexts.length === 0
+              ? 'No running AudioContext connected to the audio output'
+              : 'Multiple Web Audio contexts are connected to the audio output; this page cannot be captured unambiguously',
         });
         return;
       }
