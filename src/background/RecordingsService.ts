@@ -1,7 +1,7 @@
 import { IndexedDBRepository } from '../shared/Repository';
 import { createLogger } from '../shared/Logger';
 import { getSettings } from '../shared/Settings';
-import { applyTemplate } from '../shared/FilenameTemplate';
+import { buildDownloadPath } from '../shared/FilenameTemplate';
 import { encodeForExport } from '../shared/AudioEncoder';
 import type {
   RecordingMetadata,
@@ -160,10 +160,12 @@ export async function exportRecording(recording: Recording): Promise<ActionResul
   const format = recording.metadata.status === 'interrupted' ? 'original' : settings.exportFormat;
 
   let encoded;
+  let path: string;
   try {
     encoded = await encodeForExport(recording.blob, format, {
       mp3Kbps: Math.round(settings.bitrate / 1000),
     });
+    path = buildDownloadPath(settings.filenameTemplate, recording.metadata, encoded.extension, settings.exportSubfolder);
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     logger.error('Encoding failed:', error);
@@ -172,11 +174,6 @@ export async function exportRecording(recording: Recording): Promise<ActionResul
       error: `Could not export ${format.toUpperCase()}: ${error}`,
     };
   }
-
-  const filename = applyTemplate(settings.filenameTemplate, recording.metadata, encoded.extension);
-  const path = settings.exportSubfolder.trim()
-    ? `${settings.exportSubfolder.trim()}/${filename}`
-    : filename;
 
   const url = URL.createObjectURL(encoded.blob);
   let downloadId: number | undefined;
