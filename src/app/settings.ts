@@ -1,12 +1,11 @@
 import {
-  getSettings,
   saveSettings,
   resetSettings,
   BITRATE_OPTIONS,
   DEFAULT_SETTINGS,
   type Settings,
 } from '../shared/Settings';
-import { applyTemplate, validateTemplate } from '../shared/FilenameTemplate';
+import { buildDownloadPath, validateTemplate, validateSubfolder } from '../shared/FilenameTemplate';
 import {
   FORMAT_META,
   EXPORT_FORMATS,
@@ -107,8 +106,10 @@ function readForm(): Settings {
 }
 
 function updateTemplatePreview(template: string): void {
-  const validation = validateTemplate(template);
-  if (!validation.ok) {
+  const validation = [validateTemplate(template), validateSubfolder(exportSubfolderEl.value)].find(
+    (result) => !result.ok,
+  );
+  if (validation) {
     templatePreviewEl.textContent = '—';
     templateErrorEl.textContent = validation.error ?? 'Invalid template';
     templateErrorEl.hidden = false;
@@ -116,7 +117,12 @@ function updateTemplatePreview(template: string): void {
   }
   templateErrorEl.hidden = true;
   try {
-    templatePreviewEl.textContent = applyTemplate(template, PREVIEW_METADATA, currentExtension());
+    templatePreviewEl.textContent = buildDownloadPath(
+      template,
+      PREVIEW_METADATA,
+      currentExtension(),
+      exportSubfolderEl.value,
+    );
   } catch (err) {
     templatePreviewEl.textContent = '—';
     logger.error('Preview render failed:', err);
@@ -147,13 +153,17 @@ function scheduleSave(): void {
   saveTimer = setTimeout(() => {
     saveTimer = null;
     const next = readForm();
+    const validation = [
+      validateTemplate(next.filenameTemplate),
+      validateSubfolder(next.exportSubfolder),
+    ].find((result) => !result.ok);
+    if (validation) {
+      if (statusTimer) clearTimeout(statusTimer);
+      statusEl.textContent = 'Not saved. Correct the export path below.';
+      statusEl.classList.add('is-visible');
+      return;
+    }
     void enqueueSave(async () => {
-      // Keep the last valid template while saving other settings.
-      const validation = validateTemplate(next.filenameTemplate);
-      if (!validation.ok) {
-        const current = await getSettings();
-        next.filenameTemplate = current.filenameTemplate;
-      }
       await saveSettings(next);
       showSavedStatus();
     });
@@ -165,7 +175,6 @@ function bindEvents(): void {
   const flushOnChange = [
     bitrateEl,
     maxDurationSecEl,
-    exportSubfolderEl,
     autoExportEl,
     defaultSortFieldEl,
     defaultSortDirectionEl,
@@ -186,6 +195,10 @@ function bindEvents(): void {
   filenameTemplateEl.addEventListener('input', () => {
     updateTemplatePreview(filenameTemplateEl.value);
     void scheduleSave();
+  });
+  exportSubfolderEl.addEventListener('input', () => {
+    updateTemplatePreview(filenameTemplateEl.value);
+    scheduleSave();
   });
 
   // Reset

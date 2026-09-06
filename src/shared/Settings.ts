@@ -1,4 +1,5 @@
 import type { SortField, SortDirection, ExportFormat } from '../types';
+import { validateSubfolder, validateTemplate } from './FilenameTemplate';
 
 export interface Settings {
   // Recording
@@ -51,6 +52,12 @@ export async function getSettings(): Promise<Settings> {
 export async function saveSettings(partial: Partial<Settings>): Promise<void> {
   const current = await getSettings();
   const next = { ...current, ...partial };
+  for (const validation of [
+    validateSubfolder(next.exportSubfolder),
+    validateTemplate(next.filenameTemplate),
+  ]) {
+    if (!validation.ok) throw new Error(validation.error);
+  }
   await browser.storage.local.set({ [STORAGE_KEY]: next });
 }
 

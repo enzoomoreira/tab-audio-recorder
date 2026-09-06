@@ -50,8 +50,41 @@ export function applyTemplate(
     const fn = RESOLVERS[varName as TemplateVar];
     return sanitize(fn(meta));
   });
-  const sanitized = sanitize(body).slice(0, MAX_BASENAME_LEN);
+  const sanitized = sanitize(body)
+    .slice(0, MAX_BASENAME_LEN)
+    .replace(/^\.+|[. ]+$/g, '');
   return `${sanitized || 'recording'}.${extension}`;
+}
+
+export function validateSubfolder(subfolder: string): { ok: boolean; error?: string } {
+  const folder = subfolder.trim();
+  if (!folder) return { ok: true };
+  if (
+    folder.split('/').some((part) => !part || part.startsWith('.') || /[. ]$/.test(part)) ||
+    /[\\:*?"<>|]/.test(folder) ||
+    [...folder].some((char) => char.charCodeAt(0) < 32)
+  ) {
+    return {
+      ok: false,
+      error:
+        'Use a relative folder such as Samples/Radio, without empty or dot-prefixed segments or invalid filename characters.',
+    };
+  }
+  return { ok: true };
+}
+
+/** One path policy shared by the settings preview and downloads. */
+export function buildDownloadPath(
+  template: string,
+  meta: RecordingMetadata,
+  extension: string,
+  subfolder: string,
+): string {
+  const validation = validateSubfolder(subfolder);
+  if (!validation.ok) throw new Error(validation.error);
+  const filename = applyTemplate(template, meta, extension);
+  const folder = subfolder.trim();
+  return folder ? `${folder}/${filename}` : filename;
 }
 
 export function validateTemplate(template: string): { ok: boolean; error?: string } {
