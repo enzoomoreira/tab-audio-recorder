@@ -60,6 +60,7 @@ export async function getTabProgress(
 export function failTab(tabId: number, error: string): void {
   clearTab(tabId);
   session.setError(tabId, error);
+  updateBadge(tabId, 'idle', error);
 }
 
 export async function onRecordingError(
@@ -483,7 +484,13 @@ export async function toggleRecording(tabId: number): Promise<ActionResult> {
   if (toggling.has(tabId)) return { ok: false, error: 'A recording action is already in progress' };
   toggling.add(tabId);
   try {
-    return await toggleOnce(tabId);
+    const result = await toggleOnce(tabId);
+    if (!result.ok && session.state(tabId) === 'idle') {
+      const error = result.error ?? 'Could not change recording state';
+      session.setError(tabId, error);
+      updateBadge(tabId, 'idle', error);
+    }
+    return result;
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     failTab(tabId, reason);
@@ -586,7 +593,10 @@ export async function saveRecording(
     // while its previous recording was still being exported.
     if (saving.get(tabId) === saveToken) {
       clearTab(tabId);
-      if (failure) session.setError(tabId, failure);
+      if (failure) {
+        session.setError(tabId, failure);
+        updateBadge(tabId, 'idle', failure);
+      }
     }
   }
 }
