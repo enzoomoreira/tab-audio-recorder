@@ -42,6 +42,13 @@ function req<T>(idbRequest: IDBRequest<T>): Promise<T> {
   });
 }
 
+function committed(tx: IDBTransaction): Promise<void> {
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onabort = () => reject(tx.error ?? new DOMException('Transaction aborted', 'AbortError'));
+  });
+}
+
 export class IndexedDBRepository implements IRepository {
   private db: Promise<IDBDatabase> = openDB();
 
@@ -49,6 +56,7 @@ export class IndexedDBRepository implements IRepository {
     const db = await this.db;
     const tx = db.transaction([STORE_META, STORE_BLOBS], 'readwrite');
     await Promise.all([
+      committed(tx),
       req(tx.objectStore(STORE_META).put(recording.metadata)),
       req(tx.objectStore(STORE_BLOBS).put({ id: recording.metadata.id, blob: recording.blob })),
     ]);
@@ -85,6 +93,7 @@ export class IndexedDBRepository implements IRepository {
     const db = await this.db;
     const tx = db.transaction([STORE_META, STORE_BLOBS], 'readwrite');
     await Promise.all([
+      committed(tx),
       req(tx.objectStore(STORE_META).delete(id)),
       req(tx.objectStore(STORE_BLOBS).delete(id)),
     ]);

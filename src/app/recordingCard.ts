@@ -119,35 +119,39 @@ export function buildCard(meta: RecordingMetadata, actions: CardActions): HTMLLI
     exportBtn.disabled = true;
     exportBtn.textContent = 'Exporting...';
 
-    const result = await actions.exportRecording(meta.id);
-
-    if (!result.ok) {
+    try {
+      const result = await actions.exportRecording(meta.id);
+      if (!result.ok) throw new Error(result.error ?? 'Export failed');
+      exportBtn.textContent = 'Download started';
+      exportBtn.removeAttribute('title');
+    } catch (err) {
       exportBtn.textContent = 'Error';
-      logger.error('Export failed:', result.error);
+      exportBtn.title = err instanceof Error ? err.message : String(err);
+      logger.error('Export failed:', err);
+    } finally {
       setTimeout(() => {
         exportBtn.textContent = 'Export';
         exportBtn.disabled = false;
       }, 1500);
-      return;
     }
-
-    exportBtn.textContent = 'Exported';
-    setTimeout(() => {
-      exportBtn.textContent = 'Export';
-      exportBtn.disabled = false;
-    }, 1500);
   });
 
   deleteBtn.addEventListener('click', async () => {
     if (!confirm(`Delete recording from "${meta.sourceHost}"?\n\nThis cannot be undone.`)) return;
 
     deleteBtn.disabled = true;
-    actions.releasePlayer(player);
-    await actions.deleteRecording(meta.id);
-
-    const list = li.parentElement;
-    li.remove();
-    if (list && list.children.length === 0) actions.onListEmptied();
+    try {
+      await actions.deleteRecording(meta.id);
+      actions.releasePlayer(player);
+      const list = li.parentElement;
+      li.remove();
+      if (list && list.children.length === 0) actions.onListEmptied();
+    } catch (err) {
+      logger.error('Delete failed:', err);
+      deleteBtn.textContent = 'Retry delete';
+      deleteBtn.title = err instanceof Error ? err.message : String(err);
+      deleteBtn.disabled = false;
+    }
   });
 
   return li;

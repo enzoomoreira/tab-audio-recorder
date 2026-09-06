@@ -15,6 +15,8 @@ const sortFieldEl = document.getElementById('sortField') as HTMLSelectElement;
 const sortDirEl = document.getElementById('sortDir') as HTMLSelectElement;
 
 let debounceHandle: ReturnType<typeof setTimeout>;
+let loadRevision = 0;
+let playerRevision = 0;
 
 // Object URL cache: tracks URLs created for blobs so we can revoke on delete.
 const objectURLs = new Map<string, string>();
@@ -24,8 +26,11 @@ const objectURLs = new Map<string, string>();
 const players: AudioPlayer[] = [];
 
 function destroyPlayers(): void {
+  playerRevision++;
   for (const p of players) p.destroy();
   players.length = 0;
+  for (const url of objectURLs.values()) URL.revokeObjectURL(url);
+  objectURLs.clear();
 }
 
 function debounce(fn: () => void, ms: number): () => void {
@@ -41,8 +46,9 @@ async function loadBlobURL(id: string): Promise<string | null> {
   const cached = objectURLs.get(id);
   if (cached) return cached;
 
+  const revision = playerRevision;
   const blob = await sendToBackground({ type: 'GET_BLOB', payload: { id } });
-  if (!blob) return null;
+  if (!blob || revision !== playerRevision) return null;
 
   const url = URL.createObjectURL(blob);
   objectURLs.set(id, url);
@@ -56,12 +62,12 @@ function exportRecording(id: string): Promise<ActionResult> {
 }
 
 async function deleteRecording(id: string): Promise<void> {
+  await sendToBackground({ type: 'DELETE_RECORDING', payload: { id } });
   const url = objectURLs.get(id);
   if (url) {
     URL.revokeObjectURL(url);
     objectURLs.delete(id);
   }
-  await sendToBackground({ type: 'DELETE_RECORDING', payload: { id } });
 }
 
 function releasePlayer(player: AudioPlayer): void {
@@ -83,6 +89,8 @@ const cardActions: CardActions = {
 };
 
 async function loadRecordings(): Promise<void> {
+  const revision = ++loadRevision;
+  loadingMsg.textContent = 'Loading...';
   loadingMsg.hidden = false;
   emptyMsg.hidden = true;
   listEl.hidden = true;
@@ -101,11 +109,13 @@ async function loadRecordings(): Promise<void> {
       },
     });
   } catch (err) {
+    if (revision !== loadRevision) return;
     logger.error('Failed to list recordings:', err);
     loadingMsg.textContent = 'Failed to load recordings.';
     return;
   }
 
+  if (revision !== loadRevision) return;
   loadingMsg.hidden = true;
 
   // Tear down players from the previous render before replacing the DOM.
@@ -131,9 +141,9 @@ sortDirEl.addEventListener('change', () => void loadRecordings());
 
 // Release media resources and revoke every cached object URL on unload.
 window.addEventListener('pagehide', () => {
+  loadRevision++;
+  clearTimeout(debounceHandle);
   destroyPlayers();
-  for (const url of objectURLs.values()) URL.revokeObjectURL(url);
-  objectURLs.clear();
 });
 
 export async function initRecordings(settings: Settings): Promise<void> {

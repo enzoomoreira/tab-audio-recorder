@@ -66,6 +66,7 @@ export class AudioPlayer {
   private scrubbing = false;
   private loader: () => Promise<string | null>;
   private loadingPromise: Promise<boolean> | null = null;
+  private destroyed = false;
 
   constructor(
     container: HTMLElement,
@@ -87,8 +88,10 @@ export class AudioPlayer {
   }
 
   destroy(): void {
+    this.destroyed = true;
     this.audio.pause();
-    this.audio.src = '';
+    this.audio.removeAttribute('src');
+    this.audio.load();
   }
 
   // --- Internals ---
@@ -121,16 +124,21 @@ export class AudioPlayer {
 
   private async handleToggle(): Promise<void> {
     const loaded = await this.ensureLoaded();
-    if (!loaded) return;
+    if (!loaded || this.destroyed) return;
 
     if (this.audio.paused) {
-      void this.audio.play();
+      try {
+        await this.audio.play();
+      } catch (err) {
+        this.showError(err);
+      }
     } else {
       this.audio.pause();
     }
   }
 
   private async ensureLoaded(): Promise<boolean> {
+    if (this.destroyed) return false;
     if (this.audio.src) return true;
 
     // Dedup concurrent loads (defensive — UI also disables the button)
@@ -149,18 +157,21 @@ export class AudioPlayer {
 
     try {
       const url = await this.loader();
+      if (this.destroyed) return false;
       if (!url) {
-        this.renderPaused();
+        this.showError(new Error('Recording audio is unavailable'));
         return false;
       }
       this.audio.src = url;
       this.audio.preload = 'metadata';
       return true;
+    } catch (err) {
+      this.showError(err);
+      return false;
     } finally {
       this.btn.disabled = false;
       this.btn.classList.remove('player__btn--loading');
-      // Icon is reset by the play/pause event listeners once playback toggles.
-      // If load failed, renderPaused() above already set it back.
+      this.renderPaused();
     }
   }
 
@@ -176,7 +187,7 @@ export class AudioPlayer {
 
     // Auto-load on first scrub: lets the user pre-position before pressing play.
     const loaded = await this.ensureLoaded();
-    if (!loaded) return;
+    if (!loaded || this.destroyed) return;
 
     const dur = this.effectiveDuration();
     if (isFinite(dur) && dur > 0) {
@@ -185,6 +196,7 @@ export class AudioPlayer {
   }
 
   private renderPlaying(): void {
+    this.btn.removeAttribute('title');
     this.btn.replaceChildren(pauseIcon());
     this.btn.setAttribute('aria-label', 'Pause');
   }
@@ -192,6 +204,13 @@ export class AudioPlayer {
   private renderPaused(): void {
     this.btn.replaceChildren(playIcon());
     this.btn.setAttribute('aria-label', 'Play');
+  }
+
+  private showError(err: unknown): void {
+    if (this.destroyed) return;
+    this.renderPaused();
+    this.btn.title = err instanceof Error ? err.message : String(err);
+    this.timeEl.textContent = 'Playback failed. Try again.';
   }
 
   private effectiveDuration(): number {

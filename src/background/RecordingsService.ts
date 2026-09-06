@@ -42,10 +42,10 @@ export function getBlob(id: string): Promise<Blob | null> {
 /**
  * Persist a finished capture: build metadata from the tab, write it to
  * IndexedDB, then honor the auto-export and retention-cap settings. Tab
- * lifecycle (watchdogs, releasing the tab) is the caller's concern; this never
- * throws -- a storage failure is logged so the caller can always release the tab.
+ * lifecycle is the caller's concern. A failed persistence is returned to the
+ * caller so the UI cannot report success when the recording was not saved.
  */
-export async function saveCapture(tabId: number, result: CaptureResult): Promise<void> {
+export async function saveCapture(tabId: number, result: CaptureResult): Promise<ActionResult> {
   let url = 'unknown';
   let title = 'Unknown';
   let host = 'unknown';
@@ -76,7 +76,17 @@ export async function saveCapture(tabId: number, result: CaptureResult): Promise
   try {
     await repository.save(recording);
     logger.info('Saved recording', metadata.id, 'from', host);
+  } catch (err) {
+    const quota = err instanceof DOMException && err.name === 'QuotaExceededError';
+    const msg = err instanceof Error ? err.message : String(err);
+    const error = quota
+      ? `Storage quota exceeded (${(metadata.sizeBytes / 1024 / 1024).toFixed(1)} MB). Delete old recordings or lower the bitrate.`
+      : `Could not save recording: ${msg}`;
+    logger.error(error);
+    return { ok: false, error };
+  }
 
+  try {
     const settings = await getSettings();
 
     if (settings.autoExport) {
@@ -90,14 +100,9 @@ export async function saveCapture(tabId: number, result: CaptureResult): Promise
       await pruneOldRecordings(settings.maxRecordings);
     }
   } catch (err) {
-    const quota = err instanceof DOMException && err.name === 'QuotaExceededError';
-    const msg = err instanceof Error ? err.message : String(err);
-    logger.error(
-      quota
-        ? `Save failed: storage quota exceeded (${(metadata.sizeBytes / 1024 / 1024).toFixed(1)} MB). Delete old recordings or lower the bitrate.`
-        : `Save failed for tab ${tabId}: ${msg}`,
-    );
+    logger.error('Recording saved, but post-save processing failed:', err);
   }
+  return { ok: true };
 }
 
 /**
@@ -129,9 +134,23 @@ export async function exportRecording(recording: Recording): Promise<ActionResul
     : filename;
 
   const url = URL.createObjectURL(encoded.blob);
+  let downloadId: number | undefined;
+  const earlyCompletions = new Set<number>();
+  type DownloadDelta = Parameters<Parameters<typeof browser.downloads.onChanged.addListener>[0]>[0];
+  const cleanup = (): void => {
+    URL.revokeObjectURL(url);
+    browser.downloads.onChanged.removeListener(onChanged);
+  };
+  const onChanged = (delta: DownloadDelta): void => {
+    const state = delta.state?.current;
+    if (state !== 'complete' && state !== 'interrupted') return;
+    if (downloadId === undefined) earlyCompletions.add(delta.id);
+    else if (delta.id === downloadId) cleanup();
+  };
+  browser.downloads.onChanged.addListener(onChanged);
 
   try {
-    const downloadId = await browser.downloads.download({
+    downloadId = await browser.downloads.download({
       url,
       filename: path,
       conflictAction: 'uniquify',
@@ -139,27 +158,17 @@ export async function exportRecording(recording: Recording): Promise<ActionResul
     });
 
     if (downloadId == null) {
-      URL.revokeObjectURL(url);
+      cleanup();
       return { ok: false, error: 'Download did not start' };
     }
 
-    type DownloadDelta = Parameters<
-      Parameters<typeof browser.downloads.onChanged.addListener>[0]
-    >[0];
-    const onChanged = (delta: DownloadDelta): void => {
-      if (delta.id !== downloadId) return;
-      const state = delta.state?.current;
-      if (state === 'complete' || state === 'interrupted') {
-        URL.revokeObjectURL(url);
-        browser.downloads.onChanged.removeListener(onChanged);
-      }
-    };
-    browser.downloads.onChanged.addListener(onChanged);
+    if (earlyCompletions.has(downloadId)) cleanup();
+    earlyCompletions.clear();
 
     logger.info('Export queued', recording.metadata.id, '->', path);
     return { ok: true };
   } catch (err) {
-    URL.revokeObjectURL(url);
+    cleanup();
     const error = err instanceof Error ? err.message : String(err);
     logger.error('Export failed:', error);
     return { ok: false, error };

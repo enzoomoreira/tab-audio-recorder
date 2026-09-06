@@ -45,6 +45,7 @@ const PREVIEW_METADATA: RecordingMetadata = {
 // --- State ---
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let statusTimer: ReturnType<typeof setTimeout> | null = null;
+let saveQueue: Promise<void> = Promise.resolve();
 
 function populateBitrateOptions(): void {
   for (const value of BITRATE_OPTIONS) {
@@ -124,21 +125,31 @@ function showSavedStatus(): void {
   }, 1500);
 }
 
-async function scheduleSave(): Promise<void> {
+function enqueueSave(operation: () => Promise<void>): Promise<void> {
+  saveQueue = saveQueue.then(operation).catch((err: unknown) => {
+    logger.error('Could not save settings:', err);
+    if (statusTimer) clearTimeout(statusTimer);
+    statusEl.textContent = 'Could not save settings. Try again.';
+    statusEl.classList.add('is-visible');
+  });
+  return saveQueue;
+}
+
+function scheduleSave(): void {
   if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(async () => {
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
     const next = readForm();
-
-    // Don't persist an invalid template — UI shows error inline,
-    // but the rest of the form can still save with the previous template value.
-    const validation = validateTemplate(next.filenameTemplate);
-    if (!validation.ok) {
-      const current = await getSettings();
-      next.filenameTemplate = current.filenameTemplate;
-    }
-
-    await saveSettings(next);
-    showSavedStatus();
+    void enqueueSave(async () => {
+      // Keep the last valid template while saving other settings.
+      const validation = validateTemplate(next.filenameTemplate);
+      if (!validation.ok) {
+        const current = await getSettings();
+        next.filenameTemplate = current.filenameTemplate;
+      }
+      await saveSettings(next);
+      showSavedStatus();
+    });
   }, 300);
 }
 
@@ -173,9 +184,15 @@ function bindEvents(): void {
   // Reset
   resetBtn.addEventListener('click', async () => {
     if (!confirm('Reset all settings to defaults? Existing recordings are unaffected.')) return;
-    await resetSettings();
-    applyToForm(DEFAULT_SETTINGS);
-    showSavedStatus();
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = null;
+    resetBtn.disabled = true;
+    await enqueueSave(async () => {
+      await resetSettings();
+      applyToForm(DEFAULT_SETTINGS);
+      showSavedStatus();
+    });
+    resetBtn.disabled = false;
   });
 }
 
