@@ -62,27 +62,28 @@ The permission rationale (why each of `tabs`, `webRequest`, `webNavigation`,
 
 Where to look when you are changing a given concern:
 
-| Concern                        | File                                                                            |
-| ------------------------------ | ------------------------------------------------------------------------------- |
-| Message router (background)    | `src/background/index.ts`                                                       |
-| Capture orchestration + state  | `src/background/Orchestrator.ts`                                                |
-| Save / export / prune pipeline | `src/background/RecordingsService.ts`                                           |
-| Toolbar badge                  | `src/background/badge.ts`                                                       |
-| Per-tab state + persistence    | `src/shared/SessionState.ts`                                                    |
-| Element capture strategy       | `src/content/MediaElementRecorder.ts` + `src/content/MediaElementHook.ts`       |
-| Network capture strategy       | `src/content/NetworkRecorder.ts`                                                |
-| Web Audio capture strategy     | `src/content/WebAudioRecorder.ts` + `src/content/AudioContextHook.ts`           |
-| Content-script message handler | `src/content/index.ts`                                                          |
-| Persistence (IndexedDB)        | `src/shared/Repository.ts`                                                      |
-| Transcode (WAV/MP3)            | `src/shared/AudioEncoder.ts`                                                    |
-| Export filename rendering      | `src/shared/FilenameTemplate.ts`                                                |
-| Settings model + storage       | `src/shared/Settings.ts`                                                        |
-| Logging                        | `src/shared/Logger.ts`                                                          |
-| Domain model + message types   | `src/types/index.ts`                                                            |
-| Popup UI                       | `src/popup/index.ts`                                                            |
-| App shell + hash routing       | `src/app/index.ts`                                                              |
-| Recordings UI + audio player   | `src/app/recordings.ts` + `src/app/recordingCard.ts` + `src/app/AudioPlayer.ts` |
-| Settings UI                    | `src/app/settings.ts`                                                           |
+| Concern                                | File                                                                            |
+| -------------------------------------- | ------------------------------------------------------------------------------- |
+| Message router (background)            | `src/background/index.ts`                                                       |
+| Capture orchestration + state          | `src/background/Orchestrator.ts`                                                |
+| Save / export / prune pipeline         | `src/background/RecordingsService.ts`                                           |
+| Toolbar badge                          | `src/background/badge.ts`                                                       |
+| Per-tab state + persistence            | `src/shared/SessionState.ts`                                                    |
+| Element capture strategy               | `src/content/MediaElementRecorder.ts` + `src/content/MediaElementHook.ts`       |
+| Network capture strategy               | `src/content/NetworkRecorder.ts`                                                |
+| Web Audio capture strategy             | `src/content/WebAudioRecorder.ts` + `src/content/AudioContextHook.ts`           |
+| Content-script message handler         | `src/content/index.ts`                                                          |
+| Ordered chunk writes + acknowledgments | `src/content/ChunkSink.ts`                                                      |
+| Persistence (IndexedDB)                | `src/shared/Repository.ts`                                                      |
+| Original export / WAV/MP3 conversion   | `src/shared/AudioEncoder.ts`                                                    |
+| Export filename rendering              | `src/shared/FilenameTemplate.ts`                                                |
+| Settings model + storage               | `src/shared/Settings.ts`                                                        |
+| Logging                                | `src/shared/Logger.ts`                                                          |
+| Domain model + message types           | `src/types/index.ts`                                                            |
+| Popup UI                               | `src/popup/index.ts`                                                            |
+| App shell + hash routing               | `src/app/index.ts`                                                              |
+| Recordings UI + audio player           | `src/app/recordings.ts` + `src/app/recordingCard.ts` + `src/app/AudioPlayer.ts` |
+| Settings UI                            | `src/app/settings.ts`                                                           |
 
 ## The message bus
 
@@ -100,7 +101,7 @@ the **calling** side is checked too — no `as` cast on the reply.
 There are two messaging shapes in play:
 
 - **Request/response** — the sender `await`s a reply. The listener returns a
-  `Promise`. Used by popup/app calls into the background.
+  `Promise`. Used by popup/app calls and content chunk writes into the background.
 - **Proactive (fire-and-forget)** — the sender does not wait. The listener
   returns `undefined`. Used by the content script telling the background a
   recording finished or errored.
@@ -109,7 +110,7 @@ There are two messaging shapes in play:
 
 | Message                  | Direction                 | Shape            | Purpose                                                            |
 | ------------------------ | ------------------------- | ---------------- | ------------------------------------------------------------------ |
-| `GET_TAB_STATE`          | Popup -> Background       | request/response | Read a tab's `idle`/`armed`/`recording`/`processing` state         |
+| `GET_TAB_STATE`          | Popup -> Background       | request/response | Read tab state, error and committed recording progress             |
 | `TOGGLE_RECORDING`       | Popup -> Background       | request/response | One button: stop / disarm / start-now / arm, by state              |
 | `OPEN_APP`               | Popup -> Background       | proactive        | Open/focus the app tab, deep-linked to a section                   |
 | `CHECK_MEDIA`            | Background -> Content     | request/response | "Is a media element playing in this frame?" (`{ found, playing }`) |
@@ -120,11 +121,12 @@ There are two messaging shapes in play:
 | `ARM_CAPTURE`            | Background -> Content     | request/response | Arm the element hook to auto-capture the next play                 |
 | `DISARM_CAPTURE`         | Background -> Content     | request/response | Cancel a pending arm                                               |
 | `ABORT_CAPTURE`          | Background -> Content     | request/response | Discard an armed capture a losing frame started                    |
-| `RECORDING_COMPLETE`     | Content -> Background     | proactive        | Deliver the finished `CaptureResult` blob                          |
+| `CAPTURE_CHUNK`          | Content -> Background     | request/response | Commit the next ordered audio chunk and acknowledge storage        |
+| `RECORDING_COMPLETE`     | Content -> Background     | proactive        | Finalize a capture ID and expected chunk count                     |
 | `RECORDING_ERROR`        | Content -> Background     | proactive        | Report a mid-capture failure                                       |
 | `ARMED_STARTED`          | Content -> Background     | proactive        | An armed frame auto-started capture on `play()`                    |
 | `LIST_RECORDINGS`        | App -> Background         | request/response | Query metadata (filter + sort)                                     |
-| `DELETE_RECORDING`       | App -> Background         | request/response | Delete a recording (metadata + blob)                               |
+| `DELETE_RECORDING`       | App -> Background         | request/response | Delete metadata and stored audio, including chunks                 |
 | `GET_BLOB`               | App -> Background         | request/response | Fetch a blob for in-page playback                                  |
 | `EXPORT_RECORDING`       | App -> Background         | request/response | Run the export pipeline for one recording                          |
 | `TEST_START_RECORDING`   | Test bridge -> Background | request/response | E2E-only; stripped from production                                 |
@@ -162,38 +164,44 @@ Orchestrator.startRecording(tabId)                (src/background/Orchestrator.t
    |
    |-- Strategy 1: Media element ----------------------------------.
    |     CHECK_MEDIA across frames -> first frame with media       |
-   |     START_CAPTURE { bitrate } -> MediaElementHook.captureStream|
+   |     START_CAPTURE { bitrate, captureId } -> captureStream    |
    |                                                                |
    |-- Strategy 2: Network stream (if no media element) -----------|
    |     stream URL cached by webRequest sniffing                  |
-   |     START_NETWORK_CAPTURE { url } -> NetworkRecorder.fetch    |
+   |     START_NETWORK_CAPTURE { url, captureId } -> fetch        |
    |                                                                |
    |-- Strategy 3: Web Audio (if neither) -------------------------|
-   |     START_WEBAUDIO_CAPTURE { bitrate } -> AudioContext tap    |
+   |     START_WEBAUDIO_CAPTURE { bitrate, captureId } -> tap     |
    |                                                                |
    '--> first strategy that succeeds: mark tab 'recording', arm    |
         the optional max-duration timer <-------------------------'
         |
         v
-   (user records...)  TOGGLE_RECORDING { tabId }   (popup -> background)
+   CAPTURE_CHUNK { captureId, sequence, blob, timestamps }
+   -> owner/sequence checks -> IndexedDB commit -> acknowledgment
+        |
+   (user stops...) TOGGLE_RECORDING { tabId }     (popup -> background)
         |
         v
 Orchestrator.stopRecording -> tab 'processing', STOP_CAPTURE -> frame
         |                       arm 30s processing watchdog
         v
-Content assembles the Blob, sends RECORDING_COMPLETE { CaptureResult }
+Content drains chunk writes, sends RECORDING_COMPLETE { CaptureResult }
         |                                            (content -> background, proactive)
         v
-Orchestrator.saveRecording(tabId, result)        (owns only the tab lifecycle)
-   |  RecordingsService.saveCapture(): build RecordingMetadata, Repository.save()
-   |     if settings.autoExport -> exportRecording() (decode -> WAV/MP3 -> downloads)
-   |     if settings.maxRecordings > 0 -> prune oldest
+Orchestrator.saveRecording(tabId, frameId, result) (verifies current owner)
+   |  RecordingsService.saveCapture(): finalize saved chunk count and metadata
+   |     if settings.autoExport -> Original or WAV/MP3 -> confirmed download
+   |     if settings.maxRecordings > 0 -> prune oldest completed recordings
    '--> clearTab(tabId)  (always, even on failure)
 ```
 
-Recordings are always captured as **WebM/Opus** (the `MediaRecorder` container);
-the user's chosen WAV/MP3 format is applied only at export time by decoding and
-re-encoding. See [storage-and-export.md](storage-and-export.md).
+`startInFrame` creates metadata/session ownership before each start or arm
+command. MediaRecorder strategies choose supported WebM/Opus or Ogg; the network
+strategy preserves the response's raw audio bytes. Original export retains that
+format without decoding; WAV/MP3 conversion is optional and still decodes the
+full recording. New/reset settings default to Original. See
+[storage-and-export.md](storage-and-export.md).
 
 ## Cross-cutting invariants
 
@@ -208,6 +216,10 @@ in:
 - **State survives a background suspension.** Anything the orchestrator needs to
   resume after an MV3 wake is written through `SessionState` to
   `storage.session`. Timers are the exception — they are re-armed by `hydrate()`.
+- **Audio progress is separate from routing state.** Ordered chunks live in
+  IndexedDB and are acknowledged after transaction commit. Pending queues are
+  bounded; interruption preserves available committed bytes, without promising
+  a playable file or recovery from every browser/disk failure.
 - **The app builds DOM structurally, never from HTML strings.** `el()` /
   `svgEl()` helpers use `textContent` and `createElementNS`, which keeps the AMO
   validator clean and avoids injection surface.

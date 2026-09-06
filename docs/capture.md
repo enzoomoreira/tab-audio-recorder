@@ -31,6 +31,11 @@ Web Audio tap is the catch-all for synthesized audio that never touches a media
 element. The first strategy that returns `{ ok: true }` wins; the tab is marked
 `recording` and the optional max-duration timer is armed.
 
+Before each start/arm command, `startInFrame` allocates an IndexedDB capture
+session and includes its `captureId`. Chunks, completion, armed-start and error
+messages must match that tab/frame/session. Failed attempts and losing armed
+frames discard their allocated sessions.
+
 ### Frame routing
 
 Audio can live in any frame, so capture is addressed per `frameId`, not per tab:
@@ -103,11 +108,14 @@ any page script runs. It is self-contained (no imports, no `browser.*`):
   E2E test `02-video-with-audio` guards against.) Zero audio tracks throws.
 - **MIME selection + chunking.** Picks the first supported of
   `audio/webm;codecs=opus`, `audio/webm`, `audio/ogg;codecs=opus`, `audio/ogg`;
-  `recorder.start(1000)` emits a chunk every second, assembled into one `Blob` on
-  stop. A spontaneous mid-capture `onerror` reports `EL_ERROR`, which the ISOLATED
+  `recorder.start(1000)` requests chunks at roughly one-second intervals, but
+  scheduling can delay or enlarge them. Each chunk is sent through the ISOLATED
+  `ChunkSink` for IndexedDB storage and acknowledged after commit. The hook caps
+  pending work at 16 chunks / 8 MiB and stops on storage failure or acknowledgment
+  timeout. A spontaneous mid-capture `onerror` reports `EL_ERROR`, which the ISOLATED
   driver forwards as `RECORDING_ERROR`.
 - **Natural end and cancellation.** If media ends before the user presses Stop,
-  the hook retains the final chunks and stop timestamp for saving. It does not
+  the hook forwards the final chunks and retains the stop timestamp for completion. It does not
   call `MediaRecorder.stop()` again on an inactive recorder. Stop, abort and error
   release the captured tracks; cancellation also invalidates a start waiting for
   its first audio track.
@@ -118,14 +126,15 @@ The ISOLATED half the orchestrator drives. Because the element lives in the MAIN
 world (and may be detached, so unreachable from here), detection and capture both
 happen in the hook; this class just speaks a small `window.postMessage` protocol:
 
-| ISOLATED -> MAIN (`tab-audio-recorder`) | MAIN -> ISOLATED (`tab-audio-recorder-page`)     |
-| --------------------------------------- | ------------------------------------------------ |
-| `EL_PROBE`                              | `EL_PROBE_RESULT { found, playing }`             |
-| `EL_START { bitrate }`                  | `EL_STARTED { ok, error? }`                      |
-| `EL_STOP`                               | `EL_STOPPED { ok, blob, mimeType, ... }`         |
-| `EL_ARM { bitrate }`                    | `EL_ARM_FIRED { ok, error? }` (on the next play) |
-| `EL_DISARM` / `EL_ABORT`                | — (no reply)                                     |
-| (passive listen)                        | `EL_ERROR { error }` (spontaneous mid-capture)   |
+| ISOLATED -> MAIN (`tab-audio-recorder`)            | MAIN -> ISOLATED (`tab-audio-recorder-page`)                 |
+| -------------------------------------------------- | ------------------------------------------------------------ |
+| `EL_PROBE`                                         | `EL_PROBE_RESULT { found, playing }`                         |
+| `EL_START { bitrate, captureId }`                  | `EL_STARTED { ok, error? }`                                  |
+| `EL_STOP`                                          | `EL_STOPPED { ok, captureId, chunkCount, mimeType, ... }`    |
+| `EL_ARM { bitrate, captureId }`                    | `EL_ARM_FIRED { ok, captureId, error? }` (on the next play)  |
+| `EL_CHUNK_ACK { captureId, sequence, ok, error? }` | `EL_CHUNK { captureId, sequence, blob, startedAt, endedAt }` |
+| `EL_DISARM` / `EL_ABORT`                           | — (no reply)                                                 |
+| (passive listen)                                   | `EL_ERROR { error }` (spontaneous mid-capture)               |
 
 - `probe()` (1s timeout) answers the `CHECK_MEDIA` frame check: has the page
   played any capturable element (`found`), and is one playing right now
@@ -134,9 +143,10 @@ happen in the hook; this class just speaks a small `window.postMessage` protocol
 - `arm()` / `disarm()` / `abort()` send `EL_ARM` / `EL_DISARM` / `EL_ABORT`; a
   passive listener turns the hook's spontaneous `EL_ARM_FIRED` into the recorder
   becoming active (success) or an `onArmFailed` callback (e.g. DRM).
-- `start()` / `stop()` wait for the matching reply (10s timeout); the assembled
-  `Blob` is structured-cloneable, so it crosses the postMessage boundary and then
-  the runtime messaging boundary back to the background.
+- `start()` / `stop()` wait for the matching reply (10s timeout). Chunks cross
+  the postMessage boundary and then runtime messaging while recording. Stop
+  checks the capture ID and drains the ordered `ChunkSink` before reporting
+  completion; it sends no whole-recording Blob.
   A stop timeout aborts the hook and removes passive listeners before returning
   an error, so the next capture can start cleanly.
 
@@ -165,12 +175,15 @@ the first frame that has one.
 
 ### NetworkRecorder (`src/content/NetworkRecorder.ts`)
 
-- `fetch(url, { signal })` with an `AbortController`; the response body is read
-  chunk by chunk into a `Uint8Array[]`.
-- `stop()` aborts the fetch, waits for the read loop to drain, concatenates the
-  chunks into one `Blob`, and reports duration from wall-clock start/end.
-- MIME type is guessed from the URL extension (`.ogg`/`.opus` -> `audio/ogg`,
-  `.aac` -> `audio/aac`, `.webm` -> `audio/webm`, else `audio/mpeg`).
+- `fetch(url, { signal })` with an `AbortController`; response chunks are split
+  into pieces of at most 1 MiB, written through `ChunkSink`, and acknowledged
+  before reading further. No full-recording byte array is retained by this class.
+- `stop()` aborts the fetch, waits for the read loop and pending writes, then
+  reports the capture ID, committed chunk count and wall-clock duration.
+- MIME type uses the response `Content-Type` when available and not
+  `application/octet-stream`; otherwise it is guessed from the URL extension
+  (`.ogg`/`.opus` -> `audio/ogg`, `.aac` -> `audio/aac`, `.webm` -> `audio/webm`,
+  else `audio/mpeg`). Unknown original-export MIME types fail explicitly.
 - A failed or interrupted fetch (non-OK status, network error) fires `onError`;
   a normal abort from `stop()` is silent.
 
@@ -201,25 +214,26 @@ graph. It is fully self-contained (no imports, no `browser.*`). What it does:
   context the page creates is tracked in a set.
 - On `START`, it picks a running context (or any context), builds a
   `MediaRecorder` over the tap's stream, and records — same MIME selection and
-  1-second chunking as the element hook.
+  periodic chunk requests and bounded acknowledgment queue as the element hook.
 
 ### WebAudioRecorder (`src/content/WebAudioRecorder.ts`) — ISOLATED world
 
 The ISOLATED-world half that the orchestrator drives. Because it cannot call into
 the MAIN world directly, it speaks a small `window.postMessage` protocol:
 
-| ISOLATED -> MAIN (`tab-audio-recorder`) | MAIN -> ISOLATED (`tab-audio-recorder-page`) |
-| --------------------------------------- | -------------------------------------------- |
-| `PROBE`                                 | `PROBE_RESULT { hasContexts }`               |
-| `START { bitrate }`                     | `STARTED { ok, error? }`                     |
-| `STOP`                                  | `STOPPED { ok, blob, mimeType, ... }`        |
-| (passive listen)                        | `ERROR { error }` (spontaneous mid-capture)  |
+| ISOLATED -> MAIN (`tab-audio-recorder`)         | MAIN -> ISOLATED (`tab-audio-recorder-page`)              |
+| ----------------------------------------------- | --------------------------------------------------------- |
+| `PROBE`                                         | `PROBE_RESULT { hasContexts }`                            |
+| `START { bitrate, captureId }`                  | `STARTED { ok, error? }`                                  |
+| `STOP`                                          | `STOPPED { ok, captureId, chunkCount, mimeType, ... }`    |
+| `CHUNK_ACK { captureId, sequence, ok, error? }` | `CHUNK { captureId, sequence, blob, startedAt, endedAt }` |
+| (passive listen)                                | `ERROR { error }` (spontaneous mid-capture)               |
 
 - `probe()` (1s timeout) checks whether the page created any `AudioContext` at
   all — if not, the strategy is skipped without error.
-- `start()` / `stop()` wait for the matching reply (10s timeout); the assembled
-  `Blob` is structured-cloneable, so it crosses the postMessage boundary and then
-  the runtime messaging boundary back to the background.
+- `start()` / `stop()` wait for the matching reply (10s timeout). The shared
+  `ChunkSink` stores ordered chunks during recording; Stop validates the session
+  ID and drains the sink before returning completion metadata.
 
 ## Capture output
 
@@ -227,7 +241,8 @@ Every strategy produces a `CaptureResult` (`src/types/index.ts`):
 
 ```ts
 interface CaptureResult {
-  blob: Blob;
+  captureId: string;
+  chunkCount: number;
   mimeType: string; // typically audio/webm;codecs=opus
   durationMs: number;
   startedAt: number;
@@ -235,9 +250,11 @@ interface CaptureResult {
 }
 ```
 
-The content script forwards it to the background as `RECORDING_COMPLETE`, where
-`saveRecording` attaches tab metadata and persists it. The on-disk format is
-decided later at export time — see [storage-and-export.md](storage-and-export.md).
+The content script forwards it as `RECORDING_COMPLETE` after pending writes
+finish. `saveRecording` verifies ownership and finalizes the expected chunk count;
+tab metadata was already attached before capture started. If capture is interrupted,
+committed audio is preserved, but an unfinished container may need external repair
+before playback. See [storage-and-export.md](storage-and-export.md).
 
 ## Strategy and E2E test-page map
 

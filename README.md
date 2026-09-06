@@ -26,10 +26,14 @@ synthesize sound through the Web Audio API.
      destination for sites that play purely through the Web Audio API.
 - **Recordings manager** with per-site filtering, sorting, an inline lazy-loading
   player, export, and delete.
-- **Export format**: recordings are captured as WebM/Opus and converted on
-  export to **WAV** (lossless, larger) or **MP3** (smaller, uses the recording
-  bitrate). Conversion runs in the background, so auto-export honors the choice.
-- **Settings**: bitrate, max recording length (memory guard), export format,
+- **Incremental saving**: audio chunks are saved in the browser during recording.
+  Interrupted recordings retain committed audio, with preserved size/duration
+  shown in the manager. Playback of an interrupted file may require repair.
+- **Export format**: **Original** preserves the captured format without decoding
+  and is recommended for long recordings. Optional **WAV** and **MP3** conversion
+  runs in the background. New/reset settings default to Original; existing
+  preferences are preserved. Export reports completed downloads and failures.
+- **Settings**: bitrate, max recording length (duration/storage guard), export format,
   export subfolder, filename template, auto-export, storage cap with
   auto-cleanup, verbose logging.
 - **Arm to record from the start**: the single Record button (and the
@@ -98,9 +102,10 @@ a WebExtension:
   `FilenameTemplate`, `SessionState`, `AudioEncoder` (WAV/MP3 transcode).
 - `src/types/` — the domain model and the discriminated-union message bus.
 
-Recordings are stored in IndexedDB (metadata + blob). Export decodes the blob,
-re-encodes it to the chosen format (`AudioEncoder`), and saves it through the
-`downloads` API with a user-defined filename template.
+Recordings are stored in IndexedDB as metadata and ordered audio chunks. Stop
+finalizes the chunk count; playback/export assembles the saved audio on demand.
+Original export preserves bytes, while WAV/MP3 export decodes and re-encodes the
+audio. Files use the `downloads` API and a user-defined filename template.
 
 For the full internals — the message bus, the three-strategy capture pipeline,
 the MV3 state machine, the export pipeline, and step-by-step change recipes — see
@@ -116,6 +121,8 @@ Developer- and agent-facing docs live in [`docs/`](docs/README.md):
   detection, and frame routing.
 - [docs/storage-and-export.md](docs/storage-and-export.md) — IndexedDB
   persistence and the transcode/filename/download export pipeline.
+- [docs/incremental-recording.md](docs/incremental-recording.md) — implementation
+  plan, validation evidence and limits of incremental recording recovery.
 - [docs/state-and-lifecycle.md](docs/state-and-lifecycle.md) — the per-tab state
   machine, MV3 suspension survival, and cleanup.
 - [docs/development.md](docs/development.md) — build, test, the test bridge, and
@@ -150,10 +157,15 @@ Export writes files to your own Downloads folder.
 
 - **DRM/EME** content (e.g. Netflix, Spotify web player) cannot be captured —
   Firefox yields a silent stream, so it is refused up front.
-- The MV3 background is non-persistent; recording state is rehydrated from
-  `storage.session` on wake, but a browser restart ends any in-flight recording.
-- Long recordings are held in memory until stopped. Use the **Max recording
-  length** setting as a memory guard for long streams.
+- Navigation or a browser restart ends capture. Audio already committed to
+  browser storage can remain as an **Interrupted recording**, but the unsaved
+  tail may be lost and playback is not guaranteed without file repair.
+- Browser storage has limits. Storage failures or a pending queue that cannot
+  keep up stop capture and preserve previously committed audio. Incremental saving
+  is not a guarantee against disk failure, browser-data deletion, or every crash.
+- **Original** is recommended for long exports. **WAV/MP3** still decode the
+  complete recording and can require substantial memory. Use **Max recording
+  length** to limit duration and storage use.
 
 ## License
 

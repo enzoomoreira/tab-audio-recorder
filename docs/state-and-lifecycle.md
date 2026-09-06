@@ -4,8 +4,9 @@ The hardest part of a Manifest V3 recorder is not capturing audio — it is stay
 correct when the browser suspends your background mid-recording. This document
 covers the per-tab state machine, how state survives an MV3 suspension, the
 watchdogs, and the cleanup paths that release recording state after completion
-or a reported failure. These mechanisms do not recover unsaved audio after a
-page navigation or browser crash.
+or a reported failure. IndexedDB chunks preserve committed audio separately from
+routing state; interrupted audio may need container repair and unsaved tails can
+be lost.
 
 ## The MV3 problem
 
@@ -23,6 +24,8 @@ The lifecycle uses:
    recording limit or stop watchdog expires.
 3. **Cleanup paths** that return the tab to `idle` after completion, errors,
    timeout, or navigation of the recording frame.
+4. **Incremental audio storage** in IndexedDB, reconciled with live capture IDs
+   on wake. Nonempty orphaned sessions become interrupted recordings.
 
 ## Per-tab state machine
 
@@ -44,9 +47,9 @@ armed/recording/processing -> idle capture error, tab closed, recording frame na
   waiting for audio" and a toolbar badge marks it. The next `play()` starts capture
   in the page, and the winning frame reports `ARMED_STARTED`, moving the tab to
   `recording`. Only the media-element strategy is armable.
-- **recording** — a recorder is active in `activeFrame(tabId)`. The popup shows
-  "Recording".
-- **processing** — stop was requested and the blob is being assembled, or
+- **recording** — a recorder is active in `activeFrame(tabId)`. The popup polls
+  committed progress every two seconds and shows saved-through duration and bytes.
+- **processing** — stop was requested and pending chunk writes are draining, or
   `RECORDING_COMPLETE` has arrived and saving/exporting is in progress. The popup
   shows "Saving" and disables the button.
 
@@ -66,15 +69,16 @@ cannot clear the winner's active recording.
 
 ## SessionState (`src/shared/SessionState.ts`)
 
-Holds five maps and writes through to `storage.session` on every mutation:
+Holds six maps and writes through to `storage.session` on every mutation:
 
-| Map             | Key -> Value              | Purpose                                         |
-| --------------- | ------------------------- | ----------------------------------------------- |
-| `tabStates`     | tabId -> state            | The state machine above                         |
-| `activeFrames`  | tabId -> frameId          | Which frame the active recorder is in           |
-| `tabStreamURLs` | tabId -> (frameId -> url) | Audio stream URLs sniffed by `webRequest`       |
-| `deadlines`     | tabId -> timestamp in ms  | Recording limit or stop watchdog deadline       |
-| `errors`        | tabId -> message          | Capture/save failure exposed by `GET_TAB_STATE` |
+| Map             | Key -> Value                    | Purpose                                         |
+| --------------- | ------------------------------- | ----------------------------------------------- |
+| `tabStates`     | tabId -> state                  | The state machine above                         |
+| `activeFrames`  | tabId -> frameId                | Which frame the active recorder is in           |
+| `tabStreamURLs` | tabId -> (frameId -> url)       | Audio stream URLs sniffed by `webRequest`       |
+| `deadlines`     | tabId -> timestamp in ms        | Recording limit or stop watchdog deadline       |
+| `errors`        | tabId -> message                | Capture/save failure exposed by `GET_TAB_STATE` |
+| `captures`      | tabId -> (frameId -> captureId) | Ownership of allocated capture sessions         |
 
 `storage.session` is **in-memory and cleared on browser restart** — which is
 exactly the lifetime of an in-flight recording, so it is the right backing store.
@@ -86,7 +90,9 @@ Maps are not JSON-serializable, so `persist()` converts them to entry arrays
 `Orchestrator.hydrate()` runs on background boot (`src/background/index.ts`). It:
 
 1. Rebuilds the maps from `storage.session`.
-2. Re-arms processing watchdogs and recording-limit timers using their saved
+2. Marks IndexedDB recording sessions absent from restored capture IDs interrupted,
+   retaining committed audio and removing empty sessions.
+3. Re-arms processing watchdogs and recording-limit timers using their saved
    deadlines, preserving elapsed time. A processing state without a deadline
    receives a new 30-second watchdog.
 
@@ -109,8 +115,8 @@ local timers alone cannot. Alarm delivery is not an exact timing guarantee.
 - **Max-duration timer.** Armed at record start only if
   `settings.maxDurationSec > 0`. On expiry it calls the normal `stopRecording`
   path, so the auto-stop behaves identically to a user clicking Stop — and works
-  uniformly across all three capture strategies. This is the memory guard for
-  long streams (the whole recording is held in memory until stopped).
+  uniformly across all three capture strategies. It limits duration and storage
+  use; capture itself now uses bounded pending chunk queues.
 
 ## Cleanup paths
 
@@ -122,19 +128,25 @@ Cleanup is performed by these paths:
   the current save operation: if navigation released the tab and another capture
   started, the previous save cannot reset the new recording or attach its error.
 - **`RECORDING_ERROR`** (content -> background) — a mid-capture failure clears the
-  tab immediately when it comes from the active frame. An armed-start failure
+  tab when it matches the current frame and capture ID. An armed-start failure
   also disarms the frames; a losing frame's error leaves the winner alone.
 - **`browser.tabs.onRemoved`** — closing the tab clears its state.
 - **`browser.webNavigation.onCommitted` on the top or active frame** — navigating away
   destroys the content script (and any in-flight `MediaRecorder`), so the
   orchestrator must not keep believing the tab is recording. Navigation of
   another iframe removes its cached stream URL without clearing the recording.
-- **`clearTab`** cancels local timers and the browser alarm, and drops the tab's
-  entries from all five maps. Failure paths then retain their error message.
+- **`clearTab`** schedules interruption of its capture sessions, cancels local
+  timers and the browser alarm, and drops the tab's entries from all six maps.
+  Failure paths then retain their error message. Completed sessions remain complete;
+  nonempty unfinished sessions retain committed chunks, and empty sessions are removed.
 
-Audio remains in the capture context until completion; session persistence
-stores routing information, not an incremental recording backup. Closing or
-navigating the recording page, or crashing the browser, can lose unsaved audio.
+Capture, chunk, completion and error messages are scoped to their allocated
+session so a stale document cannot complete or fail a newer recording. A browser
+restart clears routing state and ends capture; the next background initialization
+reconciles unfinished IndexedDB sessions. This preserves available committed bytes,
+not capture continuity or guaranteed playback. Unacknowledged data can be lost and
+an interrupted MediaRecorder container may require external repair. Browser-data
+deletion, quota/disk failure and abrupt crashes remain limits.
 
 Runtime references: [MDN background scripts](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Background_scripts)
 and [MDN alarms](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/alarms).

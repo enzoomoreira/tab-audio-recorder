@@ -110,6 +110,33 @@ new version or triggering another review:
 - **Support:** email and/or the GitHub repo. **Privacy policy:** unnecessary
   here because data collection is `none`.
 
+### Recording/storage description for the updated listing
+
+Use with the release that includes incremental saving. Updating this file does
+not update the live AMO listing.
+
+```text
+Audio is saved incrementally in your browser while recording. Choose Original
+format to export without conversion; it is recommended for long recordings.
+WAV and MP3 conversion are also available. Interrupted recordings retain audio
+already saved, with preserved size and duration shown in Recordings.
+
+LIMITATIONS
+
+  DRM/EME-protected playback (Netflix, Spotify web player, and similar) cannot
+  be captured. Firefox yields a silent stream, so the add-on detects it and
+  refuses up front instead of saving silence.
+  Closing or navigating the recording tab, or restarting Firefox, ends capture.
+  Previously saved audio may remain as an Interrupted recording, but the unsaved
+  tail can be lost and playback may require file repair.
+  Browser storage has limits. If saving fails or cannot keep up, recording stops
+  and previously committed audio is retained. Incremental saving cannot guarantee
+  recovery from every crash, disk failure, or browser-data deletion.
+  WAV/MP3 export still decodes the entire recording and can use substantial
+  memory. Original avoids conversion. Use Max recording length to limit duration
+  and storage use.
+```
+
 ## 5. Submit
 
 1. Sign in to the [Developer Hub](https://addons.mozilla.org/developers/) and

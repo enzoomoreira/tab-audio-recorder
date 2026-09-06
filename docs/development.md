@@ -183,6 +183,9 @@ each common change. File paths are the source of truth; line numbers drift.
 1. **Recorder class** in `src/content/` implementing `IRecorder` (or the more
    specific `INetworkRecorder` from `src/types/index.ts`): `start(...)`,
    `stop(): Promise<CaptureResult>`, `isRecording()`, and an `onError` callback.
+   Accept the background-allocated `captureId`, write ordered chunks through
+   `ChunkSink`, and drain writes before returning completion metadata. Do not
+   retain all audio or return a whole-recording Blob from Stop.
    If the strategy must reach page-world objects the ISOLATED script cannot (a
    detached element, an `AudioContext`), pair it with a self-contained
    `document_start` MAIN-world hook and talk over `window.postMessage` — see
@@ -193,7 +196,8 @@ each common change. File paths are the source of truth; line numbers drift.
    branch and a `handleStart<X>` that instantiates the recorder, wires `onError`
    via `wireErrors`, and sets `activeRecorder`.
 4. **Orchestrator** — in `Orchestrator.startRecording`, add the strategy in the
-   fallback chain in priority order; on success call `markRecording(tabId, frameId, ...)`.
+   fallback chain in priority order; allocate ownership through `startInFrame`,
+   then on success call `markRecording(tabId, frameId, ...)`.
    If the strategy needs a detection signal, add it to `SessionState`.
 5. **Test** — add a `test-pages/` fixture and a case in `test/e2e/capture.test.ts`.
 
@@ -226,12 +230,29 @@ each common change. File paths are the source of truth; line numbers drift.
 ### Add an export format
 
 1. **Format metadata** — add the key to `ExportFormat` in `src/types/index.ts`
-   and an entry to `FORMAT_META` / `EXPORT_FORMATS` in `src/shared/exportFormats.ts`
-   (mime type, extension, label).
+   and entries to `FORMAT_META`, `EXPORT_FORMAT_LABELS` and `EXPORT_FORMATS` in
+   `src/shared/exportFormats.ts` (MIME type, extension, label).
 2. **Encoder** — add an `encode<X>(pcm, ...)` in `src/shared/AudioEncoder.ts` and
    a branch in `encodeForExport` that decodes and calls it.
 3. The settings dropdown and filename preview pick up the new format
-   automatically from `EXPORT_FORMATS` / `FORMAT_META`.
+   automatically from the format metadata. Original is a pass-through option,
+   with its extension selected by `originalExtension` from the actual MIME type;
+   extending its MIME mapping does not require a decoder.
+
+### Validate incremental recording and export
+
+Unit fixtures now allocate sessions and append chunks before finalization, and
+download mocks emit completion events rather than treating a returned download ID
+as success. These are not substitutes for long-running Firefox checks.
+
+For a release containing capture/storage changes, check all three strategies,
+natural media end, Stop with pending writes, tab closure/navigation, browser restart,
+storage failure, and Original playback/export. Verify saved metadata and chunk
+ordering separately from playable recovery. An interrupted prefix may need repair;
+the implementation has no remuxer. WAV/MP3 still decode the full recording, so
+compare their memory use with Original and do not describe them as streaming export.
+Record actual durations/results; no fixed long-recording reliability threshold is
+established by these implementation checks.
 
 ### Add a filename template variable
 

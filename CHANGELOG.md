@@ -1,5 +1,35 @@
 # Changelog
 
+## [2026-09-06 09:34]
+
+### Added
+
+- Incremental recording storage: ordered audio chunks are committed to IndexedDB
+  during capture, with bounded pending queues and visible storage failures.
+- Interrupted recordings retain committed audio for export; the manager shows
+  preserved size and duration and warns that playback may require file repair.
+- Original-format export preserves the captured bytes without decoding audio.
+- Popup recording progress shows committed bytes and saved-through duration.
+
+### Changed
+
+- New and reset settings default to Original export, recommended for long
+  recordings. Existing export preferences are preserved; WAV/MP3 conversion still
+  decodes the entire recording and can use substantial memory.
+- Recordings are assembled for playback/export only; Stop finalizes their saved
+  chunk count. Retention pruning excludes active and interrupted captures.
+- Interrupted captures export original bytes regardless of format preferences;
+  active captures cannot be played, exported or deleted before stopping.
+
+### Fixed
+
+- Export success now requires a completed download; interruption, rejection and
+  unconfirmed background suspension are reported without deleting the saved audio.
+- Failed auto-export is exposed to the user instead of being logged as an
+  otherwise successful save.
+- Capture messages are checked against their allocated tab/frame/session, so
+  stale completion and error messages cannot finalize or clear a newer recording.
+
 ## [2026-09-06 08:55]
 
 ### Added
