@@ -14,6 +14,10 @@ let tabId: number | null = null;
 let state: TabRecordingState = 'idle';
 let actionPending = false;
 let refreshVersion = 0;
+const progressTimer = setInterval((): void => {
+  if (state === 'recording' && !actionPending)
+    void refreshState().catch((error: unknown): void => showError(String(error)));
+}, 2000);
 
 async function init(): Promise<void> {
   const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
@@ -31,6 +35,13 @@ async function refreshState(): Promise<void> {
   const result = await sendToBackground({ type: 'GET_TAB_STATE', payload: { tabId } });
   if (version !== refreshVersion) return;
   applyState(result.state);
+  if (result.state === 'recording' && result.progress) {
+    const seconds = Math.floor(result.progress.savedDurationMs / 1000);
+    const elapsed = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+    setStatus(
+      `Recording - saved through ${elapsed} (${(result.progress.savedBytes / 1024 / 1024).toFixed(1)} MB)`,
+    );
+  }
   if (result.error) showError(result.error);
 }
 
@@ -47,6 +58,7 @@ function onStateChanged(
 browser.storage.onChanged.addListener(onStateChanged);
 window.addEventListener('unload', (): void => {
   refreshVersion++;
+  clearInterval(progressTimer);
   browser.storage.onChanged.removeListener(onStateChanged);
 });
 

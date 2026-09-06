@@ -107,7 +107,47 @@
 
   // --- Recording state (one at a time per page) ---
   let activeRecorder: MediaRecorder | null = null;
-  let chunks: Blob[] = [];
+  let captureId = '';
+  let chunkCount = 0;
+  let pendingBytes = 0;
+  let stopping = false;
+  const pending = new Map<number, { size: number; timer: ReturnType<typeof setTimeout> }>();
+
+  function clearPending(): void {
+    for (const item of pending.values()) clearTimeout(item.timer);
+    pending.clear();
+    pendingBytes = 0;
+  }
+
+  function failCapture(error: string): void {
+    const rec = activeRecorder;
+    activeRecorder = null;
+    clearPending();
+    if (rec) {
+      rec.ondataavailable = null;
+      rec.onstop = null;
+      rec.onerror = null;
+      if (rec.state !== 'inactive') rec.stop();
+    }
+
+    reply({ type: stopping ? 'STOPPED' : 'ERROR', captureId, ok: false, error });
+  }
+
+  function emitChunk(blob: Blob): void {
+    if (!blob.size) return;
+    if (pending.size >= 16 || pendingBytes + blob.size > 8 * 1024 * 1024) {
+      failCapture('Recording storage cannot keep up; capture stopped to preserve saved audio');
+      return;
+    }
+    const sequence = chunkCount++;
+    pendingBytes += blob.size;
+    const timer = setTimeout(
+      (): void => failCapture('Recording storage acknowledgment timed out'),
+      10_000,
+    );
+    pending.set(sequence, { size: blob.size, timer });
+    reply({ type: 'CHUNK', captureId, sequence, blob, startedAt, endedAt: Date.now() });
+  }
   let startedAt = 0;
   let mimeType = '';
   let stoppedAt = 0;
@@ -137,13 +177,32 @@
   }
 
   function reply(payload: Record<string, unknown>): void {
-    window.postMessage({ source: TAG_PAGE, ...payload }, window.location.origin);
+    window.postMessage({ source: TAG_PAGE, captureId, ...payload }, window.location.origin);
   }
 
   window.addEventListener('message', (event) => {
     if (event.source !== window) return;
-    const data = event.data as { source?: string; type?: string; bitrate?: number } | null;
+    const data = event.data as {
+      source?: string;
+      type?: string;
+      bitrate?: number;
+      captureId?: string;
+      sequence?: number;
+      ok?: boolean;
+      error?: string;
+    } | null;
     if (!data || data.source !== TAG) return;
+    if (['STOP', 'ABORT'].includes(data.type ?? '') && data.captureId !== captureId) return;
+    if (data.type === 'CHUNK_ACK') {
+      if (data.captureId !== captureId || data.sequence === undefined) return;
+      const item = pending.get(data.sequence);
+      if (!item) return;
+      clearTimeout(item.timer);
+      pending.delete(data.sequence);
+      pendingBytes -= item.size;
+      if (!data.ok) failCapture(data.error ?? 'Recording chunk could not be saved');
+      return;
+    }
 
     if (data.type === 'PROBE') {
       reply({ type: 'PROBE_RESULT', hasContexts: pickContext() !== null });
@@ -153,7 +212,7 @@
     if (data.type === 'ABORT') {
       const rec = activeRecorder;
       activeRecorder = null;
-      chunks = [];
+      clearPending();
       if (rec) {
         rec.ondataavailable = null;
         rec.onerror = null;
@@ -165,12 +224,22 @@
 
     if (data.type === 'START') {
       if (activeRecorder) {
-        reply({ type: 'STARTED', ok: false, error: 'Already recording' });
+        reply({
+          type: 'STARTED',
+          captureId: data.captureId,
+          ok: false,
+          error: 'Already recording',
+        });
         return;
       }
       const ctx = pickContext();
       if (!ctx) {
-        reply({ type: 'STARTED', ok: false, error: 'No AudioContext detected' });
+        reply({
+          type: 'STARTED',
+          captureId: data.captureId,
+          ok: false,
+          error: 'No AudioContext detected',
+        });
         return;
       }
       try {
@@ -180,33 +249,35 @@
         if (mimeType) opts.mimeType = mimeType;
         activeRecorder = new MediaRecorder(tap.stream, opts);
         mimeType = activeRecorder.mimeType;
-        chunks = [];
+        captureId = data.captureId ?? '';
+        chunkCount = 0;
+        stopping = false;
+        clearPending();
         stoppedAt = 0;
         activeRecorder.onstop = () => {
           stoppedAt = Date.now();
         };
         activeRecorder.ondataavailable = (ev) => {
-          if (ev.data.size > 0) chunks.push(ev.data);
+          emitChunk(ev.data);
         };
         // Spontaneous mid-capture failures. The STOP handler installs its own
         // onerror, so this only fires while actively recording.
-        activeRecorder.onerror = (ev) => {
+        activeRecorder.onerror = (ev): void => {
           const err = (ev as Event & { error?: { message?: string } }).error;
-          if (activeRecorder) {
-            activeRecorder.ondataavailable = null;
-            activeRecorder.onstop = null;
-          }
-          activeRecorder = null;
-          chunks = [];
-          reply({ type: 'ERROR', error: `MediaRecorder error: ${err?.message ?? 'unknown'}` });
+          failCapture(`MediaRecorder error: ${err?.message ?? 'unknown'}`);
         };
         startedAt = Date.now();
         activeRecorder.start(1000);
-        reply({ type: 'STARTED', ok: true });
+        reply({ type: 'STARTED', captureId: data.captureId, ok: true });
       } catch (err) {
         activeRecorder = null;
-        const msg = err instanceof Error ? err.message : String(err);
-        reply({ type: 'STARTED', ok: false, error: msg });
+        clearPending();
+        reply({
+          type: 'STARTED',
+          captureId: data.captureId,
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
       return;
     }
@@ -216,16 +287,17 @@
         reply({ type: 'STOPPED', ok: false, error: 'Not recording' });
         return;
       }
+      stopping = true;
       const rec = activeRecorder;
       const finalize = (): void => {
         const endedAt = stoppedAt || Date.now();
-        const blob = new Blob(chunks, { type: mimeType });
         activeRecorder = null;
-        chunks = [];
+        clearPending();
         reply({
           type: 'STOPPED',
           ok: true,
-          blob,
+          captureId,
+          chunkCount,
           mimeType,
           durationMs: endedAt - startedAt,
           startedAt,
@@ -233,21 +305,8 @@
         });
       };
       rec.onstop = finalize;
-      rec.onerror = (ev) => {
-        activeRecorder = null;
-        chunks = [];
-        rec.onstop = null;
-        rec.ondataavailable = null;
-        const err = (ev as Event & { error?: { message?: string } }).error;
-        reply({
-          type: 'STOPPED',
-          ok: false,
-          error: `MediaRecorder error: ${err?.message ?? 'unknown'}`,
-        });
-      };
       if (stoppedAt) finalize();
       else if (rec.state !== 'inactive') rec.stop();
-      return;
     }
   });
 })();

@@ -109,8 +109,19 @@ export function buildCard(meta: RecordingMetadata, actions: CardActions): HTMLLI
     el('span', { className: 'card__meta', text: metaText }),
     el('div', { className: 'card__actions' }, [exportBtn, deleteBtn]),
   ]);
-
-  li.append(header, title, playerEl, footer);
+  const status = el('p', { className: 'card__meta', attrs: { role: 'status' } });
+  if (meta.status === 'recording') {
+    status.textContent = `Recording in progress. Saved through ${formatDuration(meta.durationMs)}. Reopen Recordings after stopping to export.`;
+    exportBtn.disabled = true;
+    deleteBtn.disabled = true;
+    btn.disabled = true;
+    scrubber.disabled = true;
+  } else if (meta.status === 'interrupted') {
+    status.textContent = `Interrupted recording. ${formatSize(meta.sizeBytes)} preserved through ${formatDuration(meta.durationMs)}. Export saves the original audio; playback may require file repair.`;
+  } else {
+    status.textContent = 'Saved in Recordings';
+  }
+  li.append(header, title, playerEl, status, footer);
 
   const player = new AudioPlayer(playerEl, meta.durationMs, () => actions.loadBlobURL(meta.id));
   actions.registerPlayer(player);
@@ -122,11 +133,13 @@ export function buildCard(meta: RecordingMetadata, actions: CardActions): HTMLLI
     try {
       const result = await actions.exportRecording(meta.id);
       if (!result.ok) throw new Error(result.error ?? 'Export failed');
-      exportBtn.textContent = 'Download started';
+      exportBtn.textContent = 'Download completed';
+      status.textContent = 'Download completed. Recording remains saved here.';
       exportBtn.removeAttribute('title');
     } catch (err) {
       exportBtn.textContent = 'Error';
       exportBtn.title = err instanceof Error ? err.message : String(err);
+      status.textContent = `Export failed: ${exportBtn.title}. Recording remains saved here.`;
       logger.error('Export failed:', err);
     } finally {
       setTimeout(() => {

@@ -7,12 +7,14 @@ import {
   saveRecording,
   getTabState,
   getTabError,
+  getTabProgress,
   onRecordingError,
   onDeadlineAlarm,
   onFrameNavigated,
   clearTab,
   hydrate,
   onMediaURLDetected,
+  receiveChunk,
 } from './Orchestrator';
 import { listRecordings, deleteRecording, getBlob, exportRecordingById } from './RecordingsService';
 import { createLogger, setVerbose, getLogBuffer } from '../shared/Logger';
@@ -64,10 +66,11 @@ browser.runtime.onMessage.addListener(
       switch (message.type) {
         // --- Popup ---
         case 'GET_TAB_STATE':
-          return {
+          return getTabProgress(message.payload.tabId).then((progress) => ({
             state: getTabState(message.payload.tabId),
             error: getTabError(message.payload.tabId),
-          };
+            progress,
+          }));
 
         case 'TOGGLE_RECORDING':
           return toggleRecording(message.payload.tabId);
@@ -76,12 +79,20 @@ browser.runtime.onMessage.addListener(
           return openApp(message.payload.section);
 
         // --- Content script ---
+        case 'CAPTURE_CHUNK': {
+          const tabId = sender.tab?.id;
+          return tabId == null
+            ? { ok: false, error: 'Audio chunks must come from a recording tab.' }
+            : receiveChunk(tabId, sender.frameId ?? 0, message.payload);
+        }
         case 'RECORDING_COMPLETE': {
           const tabId = sender.tab?.id;
           if (tabId != null) {
-            return saveRecording(tabId, message.payload).catch((err: unknown) => {
-              logger.error('saveRecording threw for tab', tabId, err);
-            });
+            return saveRecording(tabId, sender.frameId ?? 0, message.payload).catch(
+              (err: unknown) => {
+                logger.error('saveRecording threw for tab', tabId, err);
+              },
+            );
           }
           return undefined;
         }
@@ -90,14 +101,20 @@ browser.runtime.onMessage.addListener(
           const tabId = sender.tab?.id;
           logger.error('Recording error on tab', tabId, message.payload.reason);
           if (tabId != null) {
-            return onRecordingError(tabId, sender.frameId ?? 0, message.payload.reason);
+            return onRecordingError(
+              tabId,
+              sender.frameId ?? 0,
+              message.payload.reason,
+              message.payload.captureId,
+            );
           }
           return undefined;
         }
 
         case 'ARMED_STARTED': {
           const tabId = sender.tab?.id;
-          if (tabId != null) return onArmedStarted(tabId, sender.frameId ?? 0);
+          if (tabId != null)
+            return onArmedStarted(tabId, sender.frameId ?? 0, message.payload.captureId);
           return undefined;
         }
 

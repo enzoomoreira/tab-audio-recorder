@@ -7,7 +7,12 @@ import {
   type Settings,
 } from '../shared/Settings';
 import { applyTemplate, validateTemplate } from '../shared/FilenameTemplate';
-import { FORMAT_META, EXPORT_FORMATS } from '../shared/exportFormats';
+import {
+  FORMAT_META,
+  EXPORT_FORMATS,
+  EXPORT_FORMAT_LABELS,
+  originalExtension,
+} from '../shared/exportFormats';
 import { createLogger } from '../shared/Logger';
 import type { RecordingMetadata, SortField, SortDirection, ExportFormat } from '../types';
 
@@ -60,14 +65,16 @@ function populateExportFormatOptions(): void {
   for (const fmt of EXPORT_FORMATS) {
     const opt = document.createElement('option');
     opt.value = fmt;
-    opt.textContent = FORMAT_META[fmt].label;
+    opt.textContent = EXPORT_FORMAT_LABELS[fmt];
     exportFormatEl.appendChild(opt);
   }
 }
 
 function currentExtension(): string {
   const fmt = exportFormatEl.value as ExportFormat;
-  return FORMAT_META[fmt]?.extension ?? FORMAT_META[DEFAULT_SETTINGS.exportFormat].extension;
+  return fmt === 'original'
+    ? originalExtension(PREVIEW_METADATA.mimeType)
+    : FORMAT_META[fmt].extension;
 }
 
 function applyToForm(s: Settings): void {

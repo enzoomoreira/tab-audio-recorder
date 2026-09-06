@@ -126,9 +126,8 @@
                   step="1"
                 />
                 <p class="field__hint">
-                  0 = unlimited. Recordings are held in memory until you stop them, so a cap
-                  protects against runaway memory use on long streams. The recording auto-stops and
-                  is saved when the limit is reached.
+                  0 = unlimited. Audio is saved incrementally while recording. A limit bounds
+                  recording length and disk usage; the recording auto-stops when it is reached.
                 </p>
               </div>
             </section>
@@ -141,9 +140,10 @@
                 <label for="exportFormat">Export format</label>
                 <select id="exportFormat" class="select"></select>
                 <p class="field__hint">
-                  Recordings are captured as WebM/Opus and converted on export.
-                  <strong>WAV</strong> is lossless (larger files); <strong>MP3</strong> is smaller
-                  and uses the bitrate above for its quality.
+                  <strong>Original</strong> preserves the captured audio without conversion and is
+                  recommended for long recordings. <strong>WAV</strong> and <strong>MP3</strong>
+                  decode the entire recording and can use substantial memory. WAV does not restore
+                  quality lost during capture; MP3 uses the bitrate above.
                 </p>
               </div>
 

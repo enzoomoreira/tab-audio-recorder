@@ -1,3 +1,4 @@
+import { ChunkSink } from './ChunkSink';
 import { createLogger } from '../shared/Logger';
 import { onPageMessage, postToPage, waitForReply } from './pageBridge';
 import type { IRecorder, CaptureResult } from '../types';
@@ -10,6 +11,7 @@ const logger = createLogger('MediaElementRecorder');
 // the postMessage protocol (see pageBridge.ts).
 export class MediaElementRecorder implements IRecorder {
   private recording = false;
+  private sink: ChunkSink | null = null;
   private disposeErrorListener: (() => void) | null = null;
   private disposeArmListener: (() => void) | null = null;
 
@@ -21,11 +23,17 @@ export class MediaElementRecorder implements IRecorder {
   onArmFailed: ((reason: string) => void) | null = null;
 
   private installErrorListener(): void {
-    this.disposeErrorListener = onPageMessage<{ error?: string }>('EL_ERROR', (data) => {
-      this.recording = false;
-      this.removeErrorListener();
-      this.onError?.(data.error ?? 'Media element capture error');
-    });
+    this.disposeErrorListener = onPageMessage<{ error?: string; captureId: string }>(
+      'EL_ERROR',
+      (data) => {
+        if (data.captureId !== this.sink?.captureId) return;
+        this.recording = false;
+        this.sink?.dispose();
+        this.sink = null;
+        this.removeErrorListener();
+        this.onError?.(data.error ?? 'Media element capture error');
+      },
+    );
   }
 
   private removeErrorListener(): void {
@@ -37,15 +45,18 @@ export class MediaElementRecorder implements IRecorder {
   // element plays. On success the recorder transitions to recording (and an
   // error listener is installed, mirroring start()); on failure it reports back.
   private installArmListener(): void {
-    this.disposeArmListener = onPageMessage<{ ok?: boolean; error?: string }>(
+    this.disposeArmListener = onPageMessage<{ ok?: boolean; error?: string; captureId: string }>(
       'EL_ARM_FIRED',
       (data) => {
+        if (data.captureId !== this.sink?.captureId) return;
         this.removeArmListener();
         if (data.ok) {
           this.recording = true;
           this.installErrorListener();
           this.onArmFired?.();
         } else {
+          this.sink?.dispose();
+          this.sink = null;
           this.onArmFailed?.(data.error ?? 'Armed capture failed');
         }
       },
@@ -72,33 +83,56 @@ export class MediaElementRecorder implements IRecorder {
   }
 
   /** Arm the hook to auto-capture the next media element that plays. */
-  arm(bitrate: number): void {
+  arm(bitrate: number, captureId: string): void {
+    this.sink?.dispose();
+    this.sink = new ChunkSink(captureId);
+    this.sink.listen('EL_');
     this.installArmListener();
-    postToPage({ type: 'EL_ARM', bitrate });
+    postToPage({ type: 'EL_ARM', bitrate, captureId });
     logger.info('Media element capture armed, bitrate:', bitrate);
   }
 
   /** Cancel a pending arm (no element has played yet). */
   disarm(): void {
     const pending = this.disposeArmListener !== null;
+    const captureId = this.sink?.captureId;
     this.removeArmListener();
-    postToPage({ type: pending ? 'EL_ABORT' : 'EL_DISARM' });
+    if (pending) {
+      this.sink?.dispose();
+      this.sink = null;
+    }
+    postToPage({ type: pending ? 'EL_ABORT' : 'EL_DISARM', captureId });
     logger.info('Media element capture disarmed');
   }
 
   /** Discard an in-flight capture without producing a recording (multi-frame race). */
   abort(): void {
+    const captureId = this.sink?.captureId;
     this.recording = false;
+    this.sink?.dispose();
+    this.sink = null;
     this.removeArmListener();
     this.removeErrorListener();
-    postToPage({ type: 'EL_ABORT' });
+    postToPage({ type: 'EL_ABORT', captureId });
     logger.info('Media element capture aborted');
   }
 
-  async start(bitrate: number): Promise<void> {
-    postToPage({ type: 'EL_START', bitrate });
-    const reply = await waitForReply<{ ok: boolean; error?: string }>('EL_STARTED');
-    if (!reply.ok) throw new Error(reply.error ?? 'Failed to start media element capture');
+  async start(bitrate: number, captureId: string): Promise<void> {
+    this.sink?.dispose();
+    this.sink = new ChunkSink(captureId);
+    this.sink.listen('EL_');
+    postToPage({ type: 'EL_START', bitrate, captureId });
+    try {
+      const reply = await waitForReply<{ ok: boolean; error?: string }>(
+        'EL_STARTED',
+        10_000,
+        captureId,
+      );
+      if (!reply.ok) throw new Error(reply.error ?? 'Failed to start capture');
+    } catch (error) {
+      this.abort();
+      throw error;
+    }
     this.recording = true;
     this.installErrorListener();
     logger.info('Media element capture started, bitrate:', bitrate);
@@ -106,11 +140,12 @@ export class MediaElementRecorder implements IRecorder {
 
   async stop(): Promise<CaptureResult> {
     if (!this.recording) throw new Error('Not recording');
-    postToPage({ type: 'EL_STOP' });
+    postToPage({ type: 'EL_STOP', captureId: this.sink?.captureId });
     type StopReply =
       | {
           ok: true;
-          blob: Blob;
+          captureId: string;
+          chunkCount: number;
           mimeType: string;
           durationMs: number;
           startedAt: number;
@@ -119,7 +154,7 @@ export class MediaElementRecorder implements IRecorder {
       | { ok: false; error: string };
     let reply: StopReply;
     try {
-      reply = await waitForReply<StopReply>('EL_STOPPED');
+      reply = await waitForReply<StopReply>('EL_STOPPED', 10_000, this.sink?.captureId);
     } catch (error) {
       this.abort();
       throw error;
@@ -127,10 +162,22 @@ export class MediaElementRecorder implements IRecorder {
       this.recording = false;
       this.removeErrorListener();
     }
-    if (!reply.ok) throw new Error(reply.error);
-    logger.info('Media element capture stopped, blob:', reply.blob.size, 'bytes');
+    if (!reply.ok) {
+      this.abort();
+      throw new Error(reply.error);
+    }
+    try {
+      if (!this.sink || reply.captureId !== this.sink.captureId)
+        throw new Error('Capture session mismatch');
+      await this.sink.drain(reply.chunkCount);
+    } finally {
+      this.sink?.dispose();
+      this.sink = null;
+    }
+    logger.info('Capture stopped, chunks:', reply.chunkCount);
     return {
-      blob: reply.blob,
+      captureId: reply.captureId,
+      chunkCount: reply.chunkCount,
       mimeType: reply.mimeType,
       durationMs: reply.durationMs,
       startedAt: reply.startedAt,

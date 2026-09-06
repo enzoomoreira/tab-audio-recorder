@@ -14,18 +14,26 @@ if (WIN.__tabAudioRecorderLoaded) {
   WIN.__tabAudioRecorderLoaded = true;
 
   let activeRecorder: IRecorder | null = null;
+  let activeCaptureId: string | null = null;
   // A media-element recorder waiting for the next play() to auto-start. Distinct
   // from activeRecorder: it is not yet recording, only armed. Promoted to
   // activeRecorder once it fires.
   let armedRecorder: MediaElementRecorder | null = null;
+  let armedCaptureId: string | null = null;
 
   // Wire a recorder's spontaneous-error callback so a mid-capture failure
   // (not triggered by stop) clears local state and notifies the background.
-  function wireErrors(rec: { onError: ((reason: string) => void) | null }): void {
+  function wireErrors(
+    rec: IRecorder & { onError: ((reason: string) => void) | null },
+    captureId: string,
+  ): void {
     rec.onError = (reason) => {
       logger.error('Recorder errored mid-capture:', reason);
-      activeRecorder = null;
-      void browser.runtime.sendMessage({ type: 'RECORDING_ERROR', payload: { reason } });
+      if (activeRecorder === rec) {
+        activeRecorder = null;
+        activeCaptureId = null;
+      }
+      void browser.runtime.sendMessage({ type: 'RECORDING_ERROR', payload: { reason, captureId } });
     };
   }
 
@@ -38,38 +46,49 @@ if (WIN.__tabAudioRecorderLoaded) {
       }
 
       if (message.type === 'START_CAPTURE') {
-        return handleStartDOM(message.payload.bitrate);
+        return handleStartDOM(message.payload.bitrate, message.payload.captureId);
       }
 
       if (message.type === 'START_NETWORK_CAPTURE') {
-        return handleStartNetwork(message.payload.url);
+        return handleStartNetwork(message.payload.url, message.payload.captureId);
       }
 
       if (message.type === 'START_WEBAUDIO_CAPTURE') {
-        return handleStartWebAudio(message.payload.bitrate);
+        return handleStartWebAudio(message.payload.bitrate, message.payload.captureId);
       }
 
       if (message.type === 'STOP_CAPTURE') {
+        if (message.payload.captureId !== activeCaptureId)
+          return Promise.resolve({ ok: false, error: 'Recording session is no longer active.' });
         return handleStop();
       }
 
       if (message.type === 'ARM_CAPTURE') {
-        return Promise.resolve(handleArm(message.payload.bitrate));
+        return Promise.resolve(handleArm(message.payload.bitrate, message.payload.captureId));
       }
 
       if (message.type === 'DISARM_CAPTURE') {
+        if (message.payload.captureId !== armedCaptureId) return Promise.resolve({ ok: true });
         armedRecorder?.disarm();
         armedRecorder = null;
+        armedCaptureId = null;
         return Promise.resolve({ ok: true });
       }
 
       if (message.type === 'ABORT_CAPTURE') {
-        if (activeRecorder instanceof MediaElementRecorder) {
+        if (
+          message.payload.captureId === activeCaptureId &&
+          activeRecorder instanceof MediaElementRecorder
+        ) {
           activeRecorder.abort();
           activeRecorder = null;
+          activeCaptureId = null;
         }
-        armedRecorder?.disarm();
-        armedRecorder = null;
+        if (message.payload.captureId === armedCaptureId) {
+          armedRecorder?.disarm();
+          armedRecorder = null;
+          armedCaptureId = null;
+        }
         return Promise.resolve({ ok: true });
       }
 
@@ -77,15 +96,16 @@ if (WIN.__tabAudioRecorderLoaded) {
     },
   );
 
-  async function handleStartDOM(bitrate: number): Promise<ActionResult> {
+  async function handleStartDOM(bitrate: number, captureId: string): Promise<ActionResult> {
     if (activeRecorder?.isRecording()) {
       return { ok: false, error: 'Already recording' };
     }
     try {
       const rec = new MediaElementRecorder();
-      await rec.start(bitrate);
+      await rec.start(bitrate, captureId);
       activeRecorder = rec;
-      wireErrors(rec);
+      activeCaptureId = captureId;
+      wireErrors(rec, captureId);
       return { ok: true };
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
@@ -98,7 +118,7 @@ if (WIN.__tabAudioRecorderLoaded) {
   // hook starts it synchronously on the next play() and signals back via
   // onArmFired, at which point the recorder becomes the active one and the
   // background is told to flip the tab to 'recording'.
-  function handleArm(bitrate: number): ActionResult {
+  function handleArm(bitrate: number, captureId: string): ActionResult {
     if (activeRecorder?.isRecording()) {
       return { ok: false, error: 'Already recording' };
     }
@@ -106,28 +126,35 @@ if (WIN.__tabAudioRecorderLoaded) {
     const rec = new MediaElementRecorder();
     rec.onArmFired = () => {
       activeRecorder = rec;
+      activeCaptureId = captureId;
       armedRecorder = null;
-      wireErrors(rec);
-      void browser.runtime.sendMessage({ type: 'ARMED_STARTED' });
+      armedCaptureId = null;
+      wireErrors(rec, captureId);
+      void browser.runtime.sendMessage({ type: 'ARMED_STARTED', payload: { captureId } });
     };
     rec.onArmFailed = (reason) => {
-      armedRecorder = null;
-      void browser.runtime.sendMessage({ type: 'RECORDING_ERROR', payload: { reason } });
+      if (armedRecorder === rec) {
+        armedRecorder = null;
+        armedCaptureId = null;
+      }
+      void browser.runtime.sendMessage({ type: 'RECORDING_ERROR', payload: { reason, captureId } });
     };
     armedRecorder = rec;
-    rec.arm(bitrate);
+    armedCaptureId = captureId;
+    rec.arm(bitrate, captureId);
     return { ok: true };
   }
 
-  async function handleStartNetwork(url: string): Promise<ActionResult> {
+  async function handleStartNetwork(url: string, captureId: string): Promise<ActionResult> {
     if (activeRecorder?.isRecording()) {
       return { ok: false, error: 'Already recording' };
     }
     try {
       const rec = new NetworkRecorder();
-      rec.start(url);
+      rec.start(url, captureId);
       activeRecorder = rec;
-      wireErrors(rec);
+      activeCaptureId = captureId;
+      wireErrors(rec, captureId);
       return { ok: true };
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
@@ -136,7 +163,7 @@ if (WIN.__tabAudioRecorderLoaded) {
     }
   }
 
-  async function handleStartWebAudio(bitrate: number): Promise<ActionResult> {
+  async function handleStartWebAudio(bitrate: number, captureId: string): Promise<ActionResult> {
     if (activeRecorder?.isRecording()) {
       return { ok: false, error: 'Already recording' };
     }
@@ -146,9 +173,10 @@ if (WIN.__tabAudioRecorderLoaded) {
       if (!hasContexts) {
         return { ok: false, error: 'No AudioContext detected on this page' };
       }
-      await rec.start(bitrate);
+      await rec.start(bitrate, captureId);
       activeRecorder = rec;
-      wireErrors(rec);
+      activeCaptureId = captureId;
+      wireErrors(rec, captureId);
       return { ok: true };
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
@@ -161,17 +189,28 @@ if (WIN.__tabAudioRecorderLoaded) {
     if (!activeRecorder?.isRecording()) {
       return { ok: false, error: 'Not recording' };
     }
+    const captureId = activeCaptureId!;
+    const recorder = activeRecorder;
     try {
-      const result = await activeRecorder.stop();
-      activeRecorder = null;
-      // Blob is structured-cloneable in Firefox
+      const result = await recorder.stop();
+      if (activeRecorder === recorder) {
+        activeRecorder = null;
+        activeCaptureId = null;
+      }
+      // All audio chunks have committed before completion is announced.
       void browser.runtime.sendMessage({ type: 'RECORDING_COMPLETE', payload: result });
       return { ok: true };
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       logger.error('Stop failed:', error);
-      activeRecorder = null;
-      void browser.runtime.sendMessage({ type: 'RECORDING_ERROR', payload: { reason: error } });
+      if (activeRecorder === recorder) {
+        activeRecorder = null;
+        activeCaptureId = null;
+      }
+      void browser.runtime.sendMessage({
+        type: 'RECORDING_ERROR',
+        payload: { reason: error, captureId },
+      });
       return { ok: false, error };
     }
   }

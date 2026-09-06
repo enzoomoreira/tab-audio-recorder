@@ -1,6 +1,6 @@
 import { Mp3Encoder } from '@breezystack/lamejs';
 import { createLogger } from './Logger';
-import { FORMAT_META } from './exportFormats';
+import { FORMAT_META, originalExtension } from './exportFormats';
 import type { ExportFormat } from '../types';
 
 const logger = createLogger('AudioEncoder');
@@ -140,7 +140,7 @@ function clampKbps(kbps: number): number {
 }
 
 /**
- * Decode a recorded blob and re-encode it to the chosen export format. Runs in
+ * Preserve original bytes, or decode and re-encode a converted export. Runs in
  * the background event page (Firefox MV3 retains Web Audio there), so both
  * manual export and auto-export honor the format setting.
  */
@@ -149,6 +149,9 @@ export async function encodeForExport(
   format: ExportFormat,
   opts: EncodeOptions = {},
 ): Promise<EncodedAudio> {
+  if (format === 'original') {
+    return { blob, mimeType: blob.type, extension: originalExtension(blob.type) };
+  }
   const meta = FORMAT_META[format];
 
   if (format === 'wav') {

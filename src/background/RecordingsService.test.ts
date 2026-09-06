@@ -2,7 +2,7 @@
 // RecordingsService owns the IndexedDB layer (a module-level singleton) and the
 // export pipeline. Each test resets modules and re-imports for isolation.
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { IDBFactory } from 'fake-indexeddb';
+import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
 import type { Settings } from '../shared/Settings';
 import type { CaptureResult } from '../types';
 
@@ -46,6 +46,7 @@ class FakeAudioContext {
 async function loadService(stubs: ServiceStubs = {}) {
   vi.resetModules();
   (globalThis as { indexedDB: unknown }).indexedDB = new IDBFactory();
+  (globalThis as { IDBKeyRange: unknown }).IDBKeyRange = IDBKeyRange;
   (globalThis as { AudioContext: unknown }).AudioContext = FakeAudioContext;
   // Node lacks object-URL APIs that the export pipeline uses.
   (
@@ -54,7 +55,10 @@ async function loadService(stubs: ServiceStubs = {}) {
   (
     globalThis as { URL: { createObjectURL: unknown; revokeObjectURL: unknown } }
   ).URL.revokeObjectURL = () => undefined;
+  type DownloadListener = (delta: { id: number; state: { current: string } }) => void;
+  const listeners = new Set<DownloadListener>();
   (globalThis as { browser: unknown }).browser = {
+    runtime: { onSuspend: { addListener: (): void => {}, removeListener: (): void => {} } },
     tabs: {
       get: async () => ({ url: 'http://example.com', title: 'Test' }),
     },
@@ -65,23 +69,49 @@ async function loadService(stubs: ServiceStubs = {}) {
       },
     },
     downloads: {
-      download: stubs.download ?? (async () => 1),
-      onChanged: { addListener: () => {}, removeListener: () => {} },
+      download: async (opts: Parameters<DownloadFn>[0]): Promise<number | undefined> => {
+        const id = await (stubs.download ?? (async (): Promise<number> => 1))(opts);
+        if (id !== undefined) {
+          for (const listener of listeners) listener({ id, state: { current: 'complete' } });
+        }
+        return id;
+      },
+      onChanged: {
+        addListener: (listener: DownloadListener): void => {
+          listeners.add(listener);
+        },
+        removeListener: (listener: DownloadListener): void => {
+          listeners.delete(listener);
+        },
+      },
     },
   };
   return await import('./RecordingsService');
 }
 
-function captureResult(overrides: Partial<CaptureResult> = {}): CaptureResult {
+async function captureResult(
+  svc: Awaited<ReturnType<typeof loadService>>,
+  tabId: number,
+  overrides: Partial<CaptureResult> = {},
+): Promise<CaptureResult> {
   const startedAt = Date.UTC(2026, 0, 1);
-  return {
-    blob: new Blob(['audio-bytes'], { type: 'audio/webm' }),
+  const result: CaptureResult = {
+    captureId: await svc.beginCapture(tabId, 0),
+    chunkCount: 1,
     mimeType: 'audio/webm',
     durationMs: 1000,
     startedAt,
     endedAt: startedAt + 1000,
     ...overrides,
   };
+  await svc.appendCapture(tabId, 0, {
+    captureId: result.captureId,
+    sequence: 0,
+    blob: new Blob(['audio-bytes'], { type: result.mimeType }),
+    startedAt: result.startedAt,
+    endedAt: result.endedAt,
+  });
+  return result;
 }
 
 describe('RecordingsService.saveCapture', () => {
@@ -91,7 +121,7 @@ describe('RecordingsService.saveCapture', () => {
 
   it('persists the recording with tab metadata', async () => {
     const svc = await loadService();
-    await svc.saveCapture(7, captureResult());
+    await svc.saveCapture(7, 0, await captureResult(svc, 7));
     const list = await svc.listRecordings();
     expect(list).toHaveLength(1);
     expect(list[0]?.sourceHost).toBe('example.com');
@@ -106,11 +136,11 @@ describe('RecordingsService.saveCapture', () => {
         return 1;
       },
     });
-    await svc.saveCapture(7, captureResult());
+    await svc.saveCapture(7, 0, await captureResult(svc, 7));
     expect(downloads).toHaveLength(1);
     expect(downloads[0]?.filename).toMatch(/example\.com/);
-    // Default format is WAV: the captured WebM is converted on export.
-    expect(downloads[0]?.filename).toMatch(/\.wav$/);
+    // Original is the default: the captured WebM is exported without conversion.
+    expect(downloads[0]?.filename).toMatch(/\.webm$/);
     expect(downloads[0]?.conflictAction).toBe('uniquify');
   });
 
@@ -123,7 +153,7 @@ describe('RecordingsService.saveCapture', () => {
         return 1;
       },
     });
-    await svc.saveCapture(7, captureResult());
+    await svc.saveCapture(7, 0, await captureResult(svc, 7));
     expect(downloads[0]?.filename).toMatch(/\.mp3$/);
   });
 
@@ -135,15 +165,15 @@ describe('RecordingsService.saveCapture', () => {
         return 1;
       },
     });
-    await svc.saveCapture(7, captureResult());
+    await svc.saveCapture(7, 0, await captureResult(svc, 7));
     expect(downloads).toHaveLength(0);
   });
 
   it('prunes oldest recordings beyond maxRecordings', async () => {
     const svc = await loadService({ settings: { maxRecordings: 2 } });
-    await svc.saveCapture(1, captureResult({ startedAt: 100, endedAt: 200 }));
-    await svc.saveCapture(2, captureResult({ startedAt: 300, endedAt: 400 }));
-    await svc.saveCapture(3, captureResult({ startedAt: 500, endedAt: 600 }));
+    await svc.saveCapture(1, 0, await captureResult(svc, 1, { startedAt: 100, endedAt: 200 }));
+    await svc.saveCapture(2, 0, await captureResult(svc, 2, { startedAt: 300, endedAt: 400 }));
+    await svc.saveCapture(3, 0, await captureResult(svc, 3, { startedAt: 500, endedAt: 600 }));
     const list = await svc.listRecordings();
     expect(list).toHaveLength(2);
     expect(list.map((r) => r.startedAt)).not.toContain(100);
@@ -163,7 +193,7 @@ describe('RecordingsService.exportRecordingById', () => {
         return 1;
       },
     });
-    await svc.saveCapture(7, captureResult());
+    await svc.saveCapture(7, 0, await captureResult(svc, 7));
     const [m] = await svc.listRecordings();
     const ok = await svc.exportRecordingById(m!.id);
     expect(ok.ok).toBe(true);

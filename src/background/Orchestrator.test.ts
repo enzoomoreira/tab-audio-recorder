@@ -2,7 +2,7 @@
 // Orchestrator owns module-level state (tabStates, activeFrames, tabStreamURLs).
 // Each test resets modules and re-imports for isolation.
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { IDBFactory } from 'fake-indexeddb';
+import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
 import type { Settings } from '../shared/Settings';
 import type { CaptureResult } from '../types';
 
@@ -54,6 +54,7 @@ class FakeAudioContext {
 async function loadOrchestrator(stubs: BrowserStubs) {
   vi.resetModules();
   (globalThis as { indexedDB: unknown }).indexedDB = new IDBFactory();
+  (globalThis as { IDBKeyRange: unknown }).IDBKeyRange = IDBKeyRange;
   (globalThis as { AudioContext: unknown }).AudioContext = FakeAudioContext;
   // Node lacks object-URL APIs that the export pipeline uses.
   (
@@ -92,7 +93,8 @@ async function loadOrchestrator(stubs: BrowserStubs) {
 function captureResult(overrides: Partial<CaptureResult> = {}): CaptureResult {
   const startedAt = Date.UTC(2026, 0, 1);
   return {
-    blob: new Blob(['audio-bytes'], { type: 'audio/webm' }),
+    captureId: 'capture-test',
+    chunkCount: 1,
     mimeType: 'audio/webm',
     durationMs: 1000,
     startedAt,
@@ -322,9 +324,28 @@ describe('Orchestrator.saveRecording', () => {
   // persistence to RecordingsService (covered in RecordingsService.test.ts) and
   // then releases the tab. This asserts that integration end to end.
   it('persists the capture (via RecordingsService) and releases the tab', async () => {
-    const orch = await loadOrchestrator({ sendMessage: async () => undefined });
+    let captureId = '';
+    const orch = await loadOrchestrator({
+      sendMessage: async (_tabId, message) => {
+        if (message.type === 'CHECK_MEDIA') return { found: true, playing: true };
+        if (message.type === 'START_CAPTURE') {
+          captureId = message.payload?.['captureId'] as string;
+          return { ok: true };
+        }
+        return undefined;
+      },
+    });
     const svc = await import('./RecordingsService');
-    await orch.saveRecording(7, captureResult());
+    await orch.startRecording(7);
+    const result = captureResult({ captureId });
+    await svc.appendCapture(7, 0, {
+      captureId,
+      sequence: 0,
+      blob: new Blob(['audio-bytes'], { type: result.mimeType }),
+      startedAt: result.startedAt,
+      endedAt: result.endedAt,
+    });
+    await orch.saveRecording(7, 0, result);
     const list = await svc.listRecordings();
     expect(list).toHaveLength(1);
     expect(list[0]?.sourceHost).toBe('example.com');
@@ -410,12 +431,16 @@ describe('Orchestrator: arm and toggle', () => {
   it('onArmedStarted promotes the winning frame and disarms the others', async () => {
     const disarmedFrames: number[] = [];
     let stoppedFrame: number | undefined;
+    let captureId = '';
     const orch = await loadOrchestrator({
       getAllFrames: async () => [{ frameId: 0 }, { frameId: 3 }],
       sendMessage: async (_t, msg, opts) => {
         if (msg.type === 'CHECK_MEDIA') return { found: false, playing: false };
         if (msg.type === 'START_WEBAUDIO_CAPTURE') return { ok: false, error: 'no ctx' };
-        if (msg.type === 'ARM_CAPTURE') return { ok: true };
+        if (msg.type === 'ARM_CAPTURE') {
+          if (opts?.frameId === 3) captureId = msg.payload?.['captureId'] as string;
+          return { ok: true };
+        }
         if (msg.type === 'DISARM_CAPTURE') {
           disarmedFrames.push(opts?.frameId ?? -1);
           return { ok: true };
@@ -429,7 +454,7 @@ describe('Orchestrator: arm and toggle', () => {
     });
     await orch.armRecording(9);
     expect(orch.getTabState(9)).toBe('armed');
-    await orch.onArmedStarted(9, 3);
+    await orch.onArmedStarted(9, 3, captureId);
     expect(orch.getTabState(9)).toBe('recording');
     expect(disarmedFrames).toContain(0);
     expect(disarmedFrames).not.toContain(3);
@@ -438,7 +463,7 @@ describe('Orchestrator: arm and toggle', () => {
     expect(stoppedFrame).toBe(3);
   });
 
-  it('onArmedStarted aborts a late frame when the tab is no longer armed', async () => {
+  it('onArmedStarted ignores a late frame with no owned capture session', async () => {
     const abortedFrames: number[] = [];
     const orch = await loadOrchestrator({
       sendMessage: async (_t, msg, opts) => {
@@ -450,8 +475,8 @@ describe('Orchestrator: arm and toggle', () => {
       },
     });
     // Tab was never armed.
-    await orch.onArmedStarted(7, 2);
-    expect(abortedFrames).toContain(2);
+    await orch.onArmedStarted(7, 2, 'late-capture');
+    expect(abortedFrames).toHaveLength(0);
     expect(orch.getTabState(7)).toBe('idle');
   });
 });
@@ -473,7 +498,7 @@ describe('Orchestrator: max-duration auto-stop', () => {
         return undefined;
       },
     });
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     try {
       await orch.startRecording(5);
       expect(orch.getTabState(5)).toBe('recording');

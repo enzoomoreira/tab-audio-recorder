@@ -2,8 +2,22 @@ import { createLogger } from '../shared/Logger';
 import { getSettings } from '../shared/Settings';
 import { SessionState } from '../shared/SessionState';
 import { updateBadge } from './badge';
-import { saveCapture } from './RecordingsService';
-import type { TabRecordingState, CaptureResult, ActionResult } from '../types';
+import {
+  saveCapture,
+  beginCapture,
+  appendCapture,
+  interruptCapture,
+  discardCapture,
+  recoverCaptures,
+  getCaptureMetadata,
+} from './RecordingsService';
+import type {
+  TabRecordingState,
+  CaptureResult,
+  ActionResult,
+  BgToContentMessage,
+  ContentToBgMessage,
+} from '../types';
 
 const logger = createLogger('Orchestrator');
 
@@ -17,12 +31,13 @@ const session = new SessionState();
 const PROCESSING_TIMEOUT_MS = 30_000;
 const processingTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
-// Optional cap on recording length (memory guard). Auto-stops via the normal
+// Optional cap on recording length and storage use. Auto-stops via the normal
 // STOP path, so it works uniformly across every capture strategy.
 const maxDurationTimers = new Map<number, ReturnType<typeof setTimeout>>();
 const ALARM_PREFIX = 'recording-deadline:';
 const toggling = new Set<number>();
 const saving = new Map<number, symbol>();
+const attempts = new Map<number, symbol>();
 
 export function getTabState(tabId: number): TabRecordingState {
   return session.state(tabId);
@@ -30,6 +45,16 @@ export function getTabState(tabId: number): TabRecordingState {
 
 export function getTabError(tabId: number): string | undefined {
   return session.error(tabId);
+}
+
+export async function getTabProgress(
+  tabId: number,
+): Promise<{ savedDurationMs: number; savedBytes: number } | null> {
+  const frame = session.activeFrame(tabId);
+  const id = frame === undefined ? undefined : session.captureId(tabId, frame);
+  if (!id) return null;
+  const metadata = await getCaptureMetadata(id);
+  return metadata ? { savedDurationMs: metadata.durationMs, savedBytes: metadata.sizeBytes } : null;
 }
 
 export function failTab(tabId: number, error: string): void {
@@ -41,12 +66,15 @@ export async function onRecordingError(
   tabId: number,
   frameId: number,
   error: string,
+  captureId: string,
 ): Promise<void> {
+  if (session.captureId(tabId, frameId) !== captureId) return;
   const activeFrame = session.activeFrame(tabId);
   if (activeFrame !== undefined && activeFrame !== frameId) return;
   const wasArmed = session.state(tabId) === 'armed';
+  const captures = session.captureFrames(tabId);
   failTab(tabId, error);
-  if (wasArmed) await broadcastDisarm(tabId);
+  if (wasArmed) await broadcastDisarm(tabId, captures);
 }
 
 export function onFrameNavigated(tabId: number, frameId: number): void {
@@ -60,6 +88,9 @@ export function onFrameNavigated(tabId: number, frameId: number): void {
 /** Restore state after a background wake and re-arm watchdogs for stuck tabs. */
 export async function hydrate(): Promise<void> {
   await session.hydrate();
+  await recoverCaptures(session.captureIds()).catch((err: unknown) =>
+    logger.error('Could not recover interrupted recordings', err),
+  );
   for (const tabId of session.tabsInState('processing')) {
     armProcessingWatchdog(tabId);
   }
@@ -82,6 +113,12 @@ export async function onDeadlineAlarm(name: string): Promise<void> {
 
 /** Drop all per-tab state and cancel any pending timers. */
 export function clearTab(tabId: number): void {
+  attempts.delete(tabId);
+  for (const id of session.captureIds(tabId)) {
+    void interruptCapture(id).catch((err: unknown) =>
+      logger.error('Could not preserve interrupted capture', err),
+    );
+  }
   saving.delete(tabId);
   session.clear(tabId);
   clearProcessingWatchdog(tabId);
@@ -189,6 +226,52 @@ function markRecording(tabId: number, frameId: number, maxDurationSec: number): 
   if (maxDurationSec > 0) armMaxDuration(tabId, maxDurationSec);
 }
 
+type CaptureStart = Extract<
+  BgToContentMessage,
+  { type: 'START_CAPTURE' | 'START_NETWORK_CAPTURE' | 'START_WEBAUDIO_CAPTURE' | 'ARM_CAPTURE' }
+>;
+
+/** Allocate storage before the page starts producing audio, including armed frames. */
+async function startInFrame(
+  tabId: number,
+  frameId: number,
+  type: CaptureStart['type'],
+  payload: { bitrate?: number; url?: string },
+  attempt: symbol,
+): Promise<ActionResult | undefined> {
+  if (attempts.get(tabId) !== attempt)
+    return { ok: false, error: 'Recording cancelled because the tab changed.' };
+  const id = await beginCapture(tabId, frameId);
+  if (attempts.get(tabId) !== attempt) {
+    await discardCapture(id);
+    return { ok: false, error: 'Recording cancelled because the tab changed.' };
+  }
+  session.setCapture(tabId, frameId, id);
+  const result: ActionResult | undefined = await browser.tabs
+    .sendMessage(tabId, { type, payload: { ...payload, captureId: id } }, { frameId })
+    .catch(() => undefined);
+  if (session.captureId(tabId, frameId) !== id) {
+    await interruptCapture(id);
+    return { ok: false, error: 'Recording session ended before capture started.' };
+  }
+  if (!result?.ok) {
+    if (session.captureId(tabId, frameId) === id) session.clearCapture(tabId, frameId);
+    await interruptCapture(id);
+  }
+  return result;
+}
+
+export async function receiveChunk(
+  tabId: number,
+  frameId: number,
+  payload: Extract<ContentToBgMessage, { type: 'CAPTURE_CHUNK' }>['payload'],
+): Promise<ActionResult> {
+  if (session.captureId(tabId, frameId) !== payload.captureId) {
+    return { ok: false, error: 'This recording session is no longer active.' };
+  }
+  return appendCapture(tabId, frameId, payload);
+}
+
 export async function startRecording(tabId: number): Promise<ActionResult> {
   if (session.state(tabId) === 'recording') {
     return { ok: false, error: 'Already recording this tab' };
@@ -197,6 +280,8 @@ export async function startRecording(tabId: number): Promise<ActionResult> {
     return { ok: false, error: 'Tab is busy recording or finishing a recording' };
   }
 
+  const attempt = Symbol();
+  attempts.set(tabId, attempt);
   const settings = await getSettings();
 
   // --- Strategy 1: DOM element (captureStream) ---
@@ -208,13 +293,13 @@ export async function startRecording(tabId: number): Promise<ActionResult> {
   }
 
   if (mediaFrameId !== null) {
-    const result: { ok: boolean; error?: string } | undefined = await browser.tabs
-      .sendMessage(
-        tabId,
-        { type: 'START_CAPTURE', payload: { bitrate: settings.bitrate } },
-        { frameId: mediaFrameId },
-      )
-      .catch(() => undefined);
+    const result = await startInFrame(
+      tabId,
+      mediaFrameId,
+      'START_CAPTURE',
+      { bitrate: settings.bitrate },
+      attempt,
+    );
 
     if (result?.ok) {
       markRecording(tabId, mediaFrameId, settings.maxDurationSec);
@@ -237,13 +322,13 @@ export async function startRecording(tabId: number): Promise<ActionResult> {
   let strategy2Error: string | undefined;
   const stream = findFrameWithStreamURL(tabId);
   if (stream) {
-    const netResult: { ok: boolean; error?: string } | undefined = await browser.tabs
-      .sendMessage(
-        tabId,
-        { type: 'START_NETWORK_CAPTURE', payload: { url: stream.url } },
-        { frameId: stream.frameId },
-      )
-      .catch(() => undefined);
+    const netResult = await startInFrame(
+      tabId,
+      stream.frameId,
+      'START_NETWORK_CAPTURE',
+      { url: stream.url },
+      attempt,
+    );
 
     if (netResult?.ok) {
       markRecording(tabId, stream.frameId, settings.maxDurationSec);
@@ -263,13 +348,13 @@ export async function startRecording(tabId: number): Promise<ActionResult> {
   // --- Strategy 3: Web Audio API hook ---
   const frameIds = await listFrameIds(tabId);
   for (const frameId of frameIds) {
-    const reply: { ok: boolean; error?: string } | undefined = await browser.tabs
-      .sendMessage(
-        tabId,
-        { type: 'START_WEBAUDIO_CAPTURE', payload: { bitrate: settings.bitrate } },
-        { frameId },
-      )
-      .catch(() => undefined);
+    const reply = await startInFrame(
+      tabId,
+      frameId,
+      'START_WEBAUDIO_CAPTURE',
+      { bitrate: settings.bitrate },
+      attempt,
+    );
     if (reply?.ok) {
       markRecording(tabId, frameId, settings.maxDurationSec);
       logger.info('Recording started (Web Audio) tab', tabId, 'frame', frameId);
@@ -280,6 +365,9 @@ export async function startRecording(tabId: number): Promise<ActionResult> {
   // A real stream-capture failure (a source existed but failed) is surfaced as-is
   // and is NOT armable. Only a clean "nothing is playing" outcome is armable, so
   // the toggle can arm and wait for the next playback.
+  if (attempts.get(tabId) !== attempt) {
+    return { ok: false, error: 'Recording cancelled because the tab changed.' };
+  }
   if (strategy2Error) {
     return { ok: false, error: strategy2Error };
   }
@@ -298,7 +386,8 @@ export async function stopRecording(tabId: number): Promise<ActionResult> {
   }
 
   const frameId = session.activeFrame(tabId);
-  if (frameId === undefined) {
+  const captureId = frameId === undefined ? undefined : session.captureId(tabId, frameId);
+  if (frameId === undefined || !captureId) {
     clearTab(tabId);
     return { ok: false, error: 'No active recording frame' };
   }
@@ -309,24 +398,23 @@ export async function stopRecording(tabId: number): Promise<ActionResult> {
   armProcessingWatchdog(tabId);
 
   const result: { ok: boolean; error?: string } | undefined = await browser.tabs
-    .sendMessage(tabId, { type: 'STOP_CAPTURE' }, { frameId })
+    .sendMessage(tabId, { type: 'STOP_CAPTURE', payload: { captureId } }, { frameId })
     .catch(() => undefined);
 
   if (!result?.ok) {
-    clearTab(tabId);
+    if (session.captureId(tabId, frameId) === captureId)
+      failTab(tabId, result?.error ?? 'Failed to stop capture');
     return { ok: false, error: result?.error ?? 'Failed to stop capture' };
   }
 
-  // Stop acknowledged; the recording is now being assembled and will arrive via
-  // RECORDING_COMPLETE. Guard against that message never landing.
+  // All chunks have committed; RECORDING_COMPLETE finalizes session metadata.
   return { ok: true };
 }
 
-async function broadcastDisarm(tabId: number): Promise<void> {
-  const frameIds = await listFrameIds(tabId);
-  for (const frameId of frameIds) {
+async function broadcastDisarm(tabId: number, captures: [number, string][]): Promise<void> {
+  for (const [frameId, captureId] of captures) {
     await browser.tabs
-      .sendMessage(tabId, { type: 'DISARM_CAPTURE' }, { frameId })
+      .sendMessage(tabId, { type: 'DISARM_CAPTURE', payload: { captureId } }, { frameId })
       .catch(() => undefined);
   }
 }
@@ -342,20 +430,24 @@ export async function armRecording(tabId: number): Promise<ActionResult> {
   if (state === 'armed') return { ok: true };
   if (state === 'processing') return { ok: false, error: 'Tab is busy finishing a recording' };
 
+  const attempt = Symbol();
+  attempts.set(tabId, attempt);
   const settings = await getSettings();
   const frameIds = await listFrameIds(tabId);
+  if (attempts.get(tabId) !== attempt)
+    return { ok: false, error: 'Recording cancelled because the tab changed.' };
   session.setState(tabId, 'armed');
   updateBadge(tabId, 'armed');
   let delivered = 0;
   for (const frameId of frameIds) {
     if (session.state(tabId) !== 'armed') break;
-    const reply: { ok?: boolean } | undefined = await browser.tabs
-      .sendMessage(
-        tabId,
-        { type: 'ARM_CAPTURE', payload: { bitrate: settings.bitrate } },
-        { frameId },
-      )
-      .catch(() => undefined);
+    const reply = await startInFrame(
+      tabId,
+      frameId,
+      'ARM_CAPTURE',
+      { bitrate: settings.bitrate },
+      attempt,
+    );
     if (reply?.ok) delivered++;
   }
 
@@ -375,8 +467,9 @@ export async function armRecording(tabId: number): Promise<ActionResult> {
 /** Cancels a pending arm and returns the tab to idle. */
 export async function disarmRecording(tabId: number): Promise<ActionResult> {
   if (session.state(tabId) !== 'armed') return { ok: false, error: 'Not armed' };
+  const captures = session.captureFrames(tabId);
   clearTab(tabId);
-  await broadcastDisarm(tabId);
+  await broadcastDisarm(tabId, captures);
   logger.info('Disarmed tab', tabId);
   return { ok: true };
 }
@@ -391,6 +484,10 @@ export async function toggleRecording(tabId: number): Promise<ActionResult> {
   toggling.add(tabId);
   try {
     return await toggleOnce(tabId);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    failTab(tabId, reason);
+    return { ok: false, error: reason };
   } finally {
     toggling.delete(tabId);
   }
@@ -414,11 +511,18 @@ async function toggleOnce(tabId: number): Promise<ActionResult> {
  * play() can't start a duplicate. If the tab is no longer armed (another frame
  * already won, or it was disarmed), tell this frame to discard its capture.
  */
-export async function onArmedStarted(tabId: number, frameId: number): Promise<void> {
+export async function onArmedStarted(
+  tabId: number,
+  frameId: number,
+  captureId: string,
+): Promise<void> {
+  if (session.captureId(tabId, frameId) !== captureId) return;
   if (session.state(tabId) !== 'armed') {
+    session.clearCapture(tabId, frameId);
     await browser.tabs
-      .sendMessage(tabId, { type: 'ABORT_CAPTURE' }, { frameId })
+      .sendMessage(tabId, { type: 'ABORT_CAPTURE', payload: { captureId } }, { frameId })
       .catch(() => undefined);
+    await discardCapture(captureId);
     return;
   }
 
@@ -432,9 +536,18 @@ export async function onArmedStarted(tabId: number, frameId: number): Promise<vo
   const frameIds = await listFrameIds(tabId);
   for (const other of frameIds) {
     if (other === frameId) continue;
+    if (session.captureId(tabId, frameId) !== captureId) return;
+    const id = session.captureId(tabId, other);
+    if (!id) continue;
+    session.clearCapture(tabId, other);
     await browser.tabs
-      .sendMessage(tabId, { type: 'DISARM_CAPTURE' }, { frameId: other })
+      .sendMessage(
+        tabId,
+        { type: 'DISARM_CAPTURE', payload: { captureId: id } },
+        { frameId: other },
+      )
       .catch(() => undefined);
+    if (id) await discardCapture(id);
   }
 }
 
@@ -444,7 +557,16 @@ export async function onArmedStarted(tabId: number, frameId: number): Promise<vo
  * cancels the processing watchdog up front and releases this save's tab state,
  * including on failure, unless navigation already invalidated its ownership.
  */
-export async function saveRecording(tabId: number, result: CaptureResult): Promise<void> {
+export async function saveRecording(
+  tabId: number,
+  frameId: number,
+  result: CaptureResult,
+): Promise<void> {
+  if (
+    session.captureId(tabId, frameId) !== result.captureId ||
+    session.activeFrame(tabId) !== frameId
+  )
+    return;
   const saveToken = Symbol();
   saving.set(tabId, saveToken);
   clearProcessingWatchdog(tabId);
@@ -454,7 +576,7 @@ export async function saveRecording(tabId: number, result: CaptureResult): Promi
   session.clearDeadline(tabId);
   let failure: string | undefined;
   try {
-    const saved = await saveCapture(tabId, result);
+    const saved = await saveCapture(tabId, frameId, result);
     if (!saved.ok) failure = saved.error ?? 'Failed to save recording';
   } catch (err) {
     failure = err instanceof Error ? err.message : String(err);

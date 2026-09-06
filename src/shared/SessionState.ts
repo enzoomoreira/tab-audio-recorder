@@ -12,6 +12,7 @@ interface Snapshot {
   tabStreamURLs: [number, [number, string][]][];
   deadlines?: [number, number][];
   errors?: [number, string][];
+  captures?: [number, [number, string][]][];
 }
 
 /**
@@ -29,6 +30,7 @@ export class SessionState {
   private tabStreamURLs = new Map<number, Map<number, string>>();
   private deadlines = new Map<number, number>();
   private errors = new Map<number, string>();
+  private captures = new Map<number, Map<number, string>>();
 
   async hydrate(): Promise<void> {
     try {
@@ -40,6 +42,7 @@ export class SessionState {
       this.tabStreamURLs = new Map(snap.tabStreamURLs.map(([tabId, e]) => [tabId, new Map(e)]));
       this.deadlines = new Map(snap.deadlines);
       this.errors = new Map(snap.errors);
+      this.captures = new Map(snap.captures?.map(([tab, frames]) => [tab, new Map(frames)]));
       logger.info('Rehydrated state for', this.tabStates.size, 'tab(s)');
     } catch (err) {
       logger.warn('Could not hydrate session state:', err);
@@ -53,6 +56,7 @@ export class SessionState {
       tabStreamURLs: [...this.tabStreamURLs].map(([tabId, e]) => [tabId, [...e]]),
       deadlines: [...this.deadlines],
       errors: [...this.errors],
+      captures: [...this.captures].map(([tab, frames]) => [tab, [...frames]]),
     };
     void browser.storage.session.set({ [KEY]: snap }).catch((err: unknown) => {
       logger.warn('Could not persist session state:', err);
@@ -124,6 +128,7 @@ export class SessionState {
   }
 
   clear(tabId: number): void {
+    this.captures.delete(tabId);
     this.tabStates.delete(tabId);
     this.activeFrames.delete(tabId);
     this.tabStreamURLs.delete(tabId);
@@ -135,5 +140,32 @@ export class SessionState {
   /** Tabs currently in a given state -- used to re-arm watchdogs after hydrate. */
   tabsInState(state: TabRecordingState): number[] {
     return [...this.tabStates.entries()].filter(([, s]) => s === state).map(([tabId]) => tabId);
+  }
+
+  captureId(tabId: number, frameId: number): string | undefined {
+    return this.captures.get(tabId)?.get(frameId);
+  }
+
+  captureFrames(tabId: number): [number, string][] {
+    return [...(this.captures.get(tabId)?.entries() ?? [])];
+  }
+
+  captureIds(tabId?: number): string[] {
+    if (tabId !== undefined) return [...(this.captures.get(tabId)?.values() ?? [])];
+    return [...this.captures.values()].flatMap((frames) => [...frames.values()]);
+  }
+
+  setCapture(tabId: number, frameId: number, id: string): void {
+    const frames = this.captures.get(tabId) ?? new Map<number, string>();
+    frames.set(frameId, id);
+    this.captures.set(tabId, frames);
+    this.persist();
+  }
+
+  clearCapture(tabId: number, frameId: number): void {
+    const frames = this.captures.get(tabId);
+    frames?.delete(frameId);
+    if (frames?.size === 0) this.captures.delete(tabId);
+    this.persist();
   }
 }

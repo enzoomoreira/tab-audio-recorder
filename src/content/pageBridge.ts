@@ -14,7 +14,7 @@ export function postToPage(payload: Record<string, unknown>): void {
 }
 
 /** Resolve with the next MAIN-world reply of the given `type`, or reject on timeout. */
-export function waitForReply<T>(type: string, timeoutMs = 10_000): Promise<T> {
+export function waitForReply<T>(type: string, timeoutMs = 10_000, captureId?: string): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = window.setTimeout(() => {
       window.removeEventListener('message', handler);
@@ -23,8 +23,9 @@ export function waitForReply<T>(type: string, timeoutMs = 10_000): Promise<T> {
 
     const handler = (event: MessageEvent): void => {
       if (event.source !== window) return;
-      const data = event.data as { source?: string; type?: string } | null;
+      const data = event.data as { source?: string; type?: string; captureId?: string } | null;
       if (!data || data.source !== TAG_PAGE || data.type !== type) return;
+      if (captureId !== undefined && data.captureId !== captureId) return;
       window.clearTimeout(timer);
       window.removeEventListener('message', handler);
       resolve(data as unknown as T);

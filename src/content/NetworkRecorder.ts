@@ -1,3 +1,4 @@
+import { ChunkSink } from './ChunkSink';
 import { createLogger } from '../shared/Logger';
 import type { INetworkRecorder, CaptureResult } from '../types';
 
@@ -14,18 +15,22 @@ function guessMimeType(url: string): string {
 export class NetworkRecorder implements INetworkRecorder {
   private controller: AbortController | null = null;
   private fetchDone: Promise<void> | null = null;
-  private chunks: Uint8Array[] = [];
+  private sink: ChunkSink | null = null;
+  private chunkCount = 0;
+  private failure: Error | null = null;
   private mimeType = 'audio/mpeg';
   private startedAt = 0;
 
   // Invoked if the stream fetch fails mid-capture (not via stop()).
   onError: ((reason: string) => void) | null = null;
 
-  start(url: string): void {
+  start(url: string, captureId: string): void {
     if (this.controller) throw new Error('Already recording');
 
     this.controller = new AbortController();
-    this.chunks = [];
+    this.sink = new ChunkSink(captureId);
+    this.chunkCount = 0;
+    this.failure = null;
     this.startedAt = Date.now();
     this.mimeType = guessMimeType(url);
 
@@ -39,10 +44,11 @@ export class NetworkRecorder implements INetworkRecorder {
       const res = await fetch(url, { signal });
       if (!res.ok || !res.body) {
         logger.error('Fetch failed:', res.status, res.statusText);
-        this.onError?.(`Stream fetch failed: ${res.status} ${res.statusText}`);
-        return;
+        throw new Error(`Stream fetch failed: ${res.status} ${res.statusText}`);
       }
 
+      const contentType = res.headers.get('content-type')?.split(';')[0]?.trim();
+      if (contentType && contentType !== 'application/octet-stream') this.mimeType = contentType;
       const reader = res.body.getReader();
       while (true) {
         const { done, value } = await reader.read();
@@ -50,15 +56,25 @@ export class NetworkRecorder implements INetworkRecorder {
           reader.releaseLock();
           break;
         }
-        if (value) this.chunks.push(value);
+        if (value) {
+          for (let offset = 0; offset < value.byteLength; offset += 1024 * 1024) {
+            const blob = new Blob([value.slice(offset, offset + 1024 * 1024)], {
+              type: this.mimeType,
+            });
+            await this.sink!.write(this.chunkCount, blob, Date.now(), this.startedAt);
+            this.chunkCount++;
+          }
+        }
       }
 
-      logger.debug('Stream ended, total chunks:', this.chunks.length);
+      logger.debug('Stream ended, total chunks:', this.chunkCount);
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
         logger.debug('Fetch aborted (normal stop)');
       } else {
         const msg = err instanceof Error ? err.message : String(err);
+        this.failure = new Error(msg);
+        this.controller?.abort();
         logger.error('Stream error:', msg);
         this.onError?.(`Stream error: ${msg}`);
       }
@@ -70,31 +86,27 @@ export class NetworkRecorder implements INetworkRecorder {
       throw new Error('Not recording');
     }
 
-    const startedAt = this.startedAt;
-    const mimeType = this.mimeType;
-
-    // Abort the stream and wait for the fetch coroutine to finish collecting
+    const sink = this.sink!;
     this.controller.abort();
     await this.fetchDone;
-
-    const endedAt = Date.now();
-
-    // Assemble chunks into a single Blob
-    const totalBytes = this.chunks.reduce((n, c) => n + c.length, 0);
-    const buffer = new Uint8Array(totalBytes);
-    let offset = 0;
-    for (const chunk of this.chunks) {
-      buffer.set(chunk, offset);
-      offset += chunk.length;
+    try {
+      if (this.failure) throw this.failure;
+      await sink.drain(this.chunkCount);
+      const endedAt = Date.now();
+      return {
+        captureId: sink.captureId,
+        chunkCount: this.chunkCount,
+        mimeType: this.mimeType,
+        startedAt: this.startedAt,
+        endedAt,
+        durationMs: endedAt - this.startedAt,
+      };
+    } finally {
+      sink.dispose();
+      this.sink = null;
+      this.controller = null;
+      this.fetchDone = null;
     }
-    const blob = new Blob([buffer], { type: mimeType });
-
-    this.controller = null;
-    this.fetchDone = null;
-    this.chunks = [];
-
-    logger.info('Stopped, blob size:', blob.size, 'bytes, duration:', endedAt - startedAt, 'ms');
-    return { blob, mimeType, durationMs: endedAt - startedAt, startedAt, endedAt };
   }
 
   isRecording(): boolean {

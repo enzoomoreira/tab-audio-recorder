@@ -131,7 +131,47 @@
 
   // --- Recording state (one at a time per page) ---
   let activeRecorder: MediaRecorder | null = null;
-  let chunks: Blob[] = [];
+  let captureId = '';
+  let chunkCount = 0;
+  let pendingBytes = 0;
+  let stopping = false;
+  const pending = new Map<number, { size: number; timer: ReturnType<typeof setTimeout> }>();
+
+  function clearPending(): void {
+    for (const item of pending.values()) clearTimeout(item.timer);
+    pending.clear();
+    pendingBytes = 0;
+  }
+
+  function failCapture(error: string): void {
+    const rec = activeRecorder;
+    activeRecorder = null;
+    clearPending();
+    if (rec) {
+      rec.ondataavailable = null;
+      rec.onstop = null;
+      rec.onerror = null;
+      if (rec.state !== 'inactive') rec.stop();
+    }
+    releaseStream();
+    reply({ type: stopping ? 'EL_STOPPED' : 'EL_ERROR', captureId, ok: false, error });
+  }
+
+  function emitChunk(blob: Blob): void {
+    if (!blob.size) return;
+    if (pending.size >= 16 || pendingBytes + blob.size > 8 * 1024 * 1024) {
+      failCapture('Recording storage cannot keep up; capture stopped to preserve saved audio');
+      return;
+    }
+    const sequence = chunkCount++;
+    pendingBytes += blob.size;
+    const timer = setTimeout(
+      (): void => failCapture('Recording storage acknowledgment timed out'),
+      10_000,
+    );
+    pending.set(sequence, { size: blob.size, timer });
+    reply({ type: 'EL_CHUNK', captureId, sequence, blob, startedAt, endedAt: Date.now() });
+  }
   let startedAt = 0;
   let mimeType = '';
   let stoppedAt = 0;
@@ -148,7 +188,7 @@
   let armBitrate = 128_000;
 
   function reply(payload: Record<string, unknown>): void {
-    window.postMessage({ source: TAG_PAGE, ...payload }, window.location.origin);
+    window.postMessage({ source: TAG_PAGE, captureId, ...payload }, window.location.origin);
   }
 
   // Sets up and starts a MediaRecorder over `el`'s captured audio. Shared by the
@@ -157,12 +197,14 @@
   async function beginCapture(
     el: HTMLMediaElement,
     bitrate: number,
+    id: string,
   ): Promise<{ ok: true } | { ok: false; error: string }> {
     // EME/DRM-protected playback yields a silent capture stream in Firefox.
     // Surface this up-front instead of recording silence.
     if ((el as unknown as { mediaKeys?: unknown }).mediaKeys != null) {
       return { ok: false, error: 'DRM/EME content cannot be captured (Firefox security policy)' };
     }
+    captureId = id;
     starting = true;
     const attempt = generation;
     try {
@@ -188,27 +230,22 @@
       if (mimeType) opts.mimeType = mimeType;
       activeRecorder = new MediaRecorder(audioOnly, opts);
       mimeType = activeRecorder.mimeType;
-      chunks = [];
+      chunkCount = 0;
+      stopping = false;
+      clearPending();
       stoppedAt = 0;
       activeRecorder.onstop = () => {
         stoppedAt = Date.now();
         releaseStream();
       };
       activeRecorder.ondataavailable = (ev) => {
-        if (ev.data.size > 0) chunks.push(ev.data);
+        emitChunk(ev.data);
       };
       // Spontaneous mid-capture failures. The STOP handler installs its own
       // onstop/onerror, so this only fires while actively recording.
-      activeRecorder.onerror = (ev) => {
+      activeRecorder.onerror = (ev): void => {
         const err = (ev as Event & { error?: { message?: string } }).error;
-        if (activeRecorder) {
-          activeRecorder.ondataavailable = null;
-          activeRecorder.onstop = null;
-        }
-        activeRecorder = null;
-        chunks = [];
-        releaseStream();
-        reply({ type: 'EL_ERROR', error: `MediaRecorder error: ${err?.message ?? 'unknown'}` });
+        failCapture(`MediaRecorder error: ${err?.message ?? 'unknown'}`);
       };
       startedAt = Date.now();
       activeRecorder.start(1000);
@@ -222,17 +259,22 @@
     }
   }
 
-  async function handleStart(bitrate: number): Promise<void> {
+  async function handleStart(bitrate: number, id: string): Promise<void> {
     if (activeRecorder || starting) {
-      reply({ type: 'EL_STARTED', ok: false, error: 'Already recording' });
+      reply({ type: 'EL_STARTED', captureId: id, ok: false, error: 'Already recording' });
       return;
     }
     const el = pickElement();
     if (!el) {
-      reply({ type: 'EL_STARTED', ok: false, error: 'No media element found on this page' });
+      reply({
+        type: 'EL_STARTED',
+        captureId: id,
+        ok: false,
+        error: 'No media element found on this page',
+      });
       return;
     }
-    reply({ type: 'EL_STARTED', ...(await beginCapture(el, bitrate)) });
+    reply({ type: 'EL_STARTED', captureId: id, ...(await beginCapture(el, bitrate, id)) });
   }
 
   // Auto-start triggered from the patched play() while armed. Captures the exact
@@ -240,11 +282,12 @@
   // spontaneous (not awaited by the ISOLATED driver), so it routes through the
   // EL_ARM_FIRED passive listener there.
   async function handleArmedStart(el: HTMLMediaElement, bitrate: number): Promise<void> {
+    const id = captureId;
     if (activeRecorder || starting) {
-      reply({ type: 'EL_ARM_FIRED', ok: false, error: 'Already recording' });
+      reply({ type: 'EL_ARM_FIRED', captureId: id, ok: false, error: 'Already recording' });
       return;
     }
-    reply({ type: 'EL_ARM_FIRED', ...(await beginCapture(el, bitrate)) });
+    reply({ type: 'EL_ARM_FIRED', captureId: id, ...(await beginCapture(el, bitrate, id)) });
   }
 
   // Stop and discard an in-flight capture without producing a blob. Used when a
@@ -258,7 +301,7 @@
     if (!activeRecorder) return;
     const rec = activeRecorder;
     activeRecorder = null;
-    chunks = [];
+    clearPending();
     rec.ondataavailable = null;
     rec.onerror = null;
     rec.onstop = null;
@@ -274,17 +317,19 @@
       reply({ type: 'EL_STOPPED', ok: false, error: 'Not recording' });
       return;
     }
+    stopping = true;
     const rec = activeRecorder;
     const finalize = (): void => {
       const endedAt = stoppedAt || Date.now();
-      const blob = new Blob(chunks, { type: mimeType });
+
       activeRecorder = null;
-      chunks = [];
+      clearPending();
       releaseStream();
       reply({
         type: 'EL_STOPPED',
         ok: true,
-        blob,
+        captureId,
+        chunkCount,
         mimeType,
         durationMs: endedAt - startedAt,
         startedAt,
@@ -292,18 +337,9 @@
       });
     };
     rec.onstop = finalize;
-    rec.onerror = (ev) => {
-      activeRecorder = null;
-      chunks = [];
-      rec.onstop = null;
-      rec.ondataavailable = null;
-      releaseStream();
+    rec.onerror = (ev): void => {
       const err = (ev as Event & { error?: { message?: string } }).error;
-      reply({
-        type: 'EL_STOPPED',
-        ok: false,
-        error: `MediaRecorder error: ${err?.message ?? 'unknown'}`,
-      });
+      failCapture(`MediaRecorder error: ${err?.message ?? 'unknown'}`);
     };
     if (stoppedAt) finalize();
     else if (rec.state !== 'inactive') rec.stop();
@@ -311,8 +347,31 @@
 
   window.addEventListener('message', (event) => {
     if (event.source !== window) return;
-    const data = event.data as { source?: string; type?: string; bitrate?: number } | null;
+    const data = event.data as {
+      source?: string;
+      type?: string;
+      bitrate?: number;
+      captureId?: string;
+      sequence?: number;
+      ok?: boolean;
+      error?: string;
+    } | null;
     if (!data || data.source !== TAG) return;
+    if (
+      ['EL_STOP', 'EL_ABORT', 'EL_DISARM'].includes(data.type ?? '') &&
+      data.captureId !== captureId
+    )
+      return;
+    if (data.type === 'EL_CHUNK_ACK') {
+      if (data.captureId !== captureId || data.sequence === undefined) return;
+      const item = pending.get(data.sequence);
+      if (!item) return;
+      clearTimeout(item.timer);
+      pending.delete(data.sequence);
+      pendingBytes -= item.size;
+      if (!data.ok) failCapture(data.error ?? 'Recording chunk could not be saved');
+      return;
+    }
 
     if (data.type === 'EL_PROBE') {
       reply({
@@ -321,10 +380,11 @@
         playing: tracked.some(isPlaying),
       });
     } else if (data.type === 'EL_START') {
-      void handleStart(data.bitrate ?? 128_000);
+      void handleStart(data.bitrate ?? 128_000, data.captureId ?? '');
     } else if (data.type === 'EL_STOP') {
       handleStop();
     } else if (data.type === 'EL_ARM') {
+      captureId = data.captureId ?? '';
       armed = true;
       armBitrate = data.bitrate ?? 128_000;
     } else if (data.type === 'EL_DISARM') {

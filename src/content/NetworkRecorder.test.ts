@@ -48,28 +48,51 @@ function openUntilAbort(signal: AbortSignal, initial: Uint8Array[]): ReadableStr
 }
 
 function okResponse(body: ReadableStream<Uint8Array>): Response {
-  return { ok: true, status: 200, statusText: 'OK', body } as unknown as Response;
+  return {
+    ok: true,
+    status: 200,
+    statusText: 'OK',
+    body,
+    headers: new Headers(),
+  } as unknown as Response;
 }
 
 describe('NetworkRecorder', () => {
+  let savedChunks: Blob[];
+
   beforeEach(() => {
     vi.restoreAllMocks();
+    savedChunks = [];
+    vi.stubGlobal('browser', {
+      runtime: {
+        sendMessage: vi.fn(async (message: { payload: { blob: Blob } }): Promise<{ ok: true }> => {
+          savedChunks.push(message.payload.blob);
+          return { ok: true };
+        }),
+      },
+    });
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     delete (globalThis as { fetch?: unknown }).fetch;
   });
 
-  it('assembles streamed chunks into a single blob', async () => {
+  it('persists streamed chunks and returns capture metadata', async () => {
     setFetch(async () =>
       okResponse(closingStream([new Uint8Array([1, 2, 3]), new Uint8Array([4, 5])])),
     );
     const rec = new NetworkRecorder();
-    rec.start('https://radio.example/stream.mp3');
+    rec.start('https://radio.example/stream.mp3', 'capture-test');
     // Let the self-closing stream drain.
     await new Promise((r) => setTimeout(r, 10));
     const result = await rec.stop();
-    expect(result.blob.size).toBe(5);
+    expect(new Blob(savedChunks).size).toBe(5);
+    expect(result.captureId).toBe('capture-test');
+    expect(result.chunkCount).toBe(2);
+    expect(Array.from(new Uint8Array(await new Blob(savedChunks).arrayBuffer()))).toEqual([
+      1, 2, 3, 4, 5,
+    ]);
     expect(result.mimeType).toBe('audio/mpeg');
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
   });
@@ -85,7 +108,7 @@ describe('NetworkRecorder', () => {
     for (const [url, mime] of cases) {
       setFetch(async () => okResponse(closingStream([new Uint8Array([0])])));
       const rec = new NetworkRecorder();
-      rec.start(url);
+      rec.start(url, 'capture-test');
       await new Promise((r) => setTimeout(r, 5));
       const result = await rec.stop();
       expect(result.mimeType).toBe(mime);
@@ -97,13 +120,14 @@ describe('NetworkRecorder', () => {
       okResponse(openUntilAbort(init.signal, [new Uint8Array([1, 2]), new Uint8Array([3, 4, 5])])),
     );
     const rec = new NetworkRecorder();
-    rec.start('https://radio.example/live');
+    rec.start('https://radio.example/live', 'capture-test');
     await new Promise((r) => setTimeout(r, 10));
     const result = await rec.stop();
-    expect(result.blob.size).toBe(5);
+    expect(new Blob(savedChunks).size).toBe(5);
+    expect(result.chunkCount).toBe(2);
   });
 
-  it('reports onError and yields an empty blob when the response is not ok', async () => {
+  it('reports onError and rejects stop when the response is not ok', async () => {
     setFetch(
       async () =>
         ({ ok: false, status: 404, statusText: 'Not Found', body: null }) as unknown as Response,
@@ -111,10 +135,10 @@ describe('NetworkRecorder', () => {
     const rec = new NetworkRecorder();
     const errors: string[] = [];
     rec.onError = (reason) => errors.push(reason);
-    rec.start('https://radio.example/missing.mp3');
+    rec.start('https://radio.example/missing.mp3', 'capture-test');
     await new Promise((r) => setTimeout(r, 10));
-    const result = await rec.stop();
-    expect(result.blob.size).toBe(0);
+    await expect(rec.stop()).rejects.toThrow(/404/);
+    expect(savedChunks).toHaveLength(0);
     expect(errors).toHaveLength(1);
     expect(errors[0]).toMatch(/404/);
   });
@@ -126,9 +150,9 @@ describe('NetworkRecorder', () => {
     const rec = new NetworkRecorder();
     const errors: string[] = [];
     rec.onError = (reason) => errors.push(reason);
-    rec.start('https://radio.example/stream.mp3');
+    rec.start('https://radio.example/stream.mp3', 'capture-test');
     await new Promise((r) => setTimeout(r, 10));
-    await rec.stop();
+    await expect(rec.stop()).rejects.toThrow(/network down/);
     expect(errors).toHaveLength(1);
     expect(errors[0]).toMatch(/network down/);
   });
@@ -137,7 +161,7 @@ describe('NetworkRecorder', () => {
     setFetch(async () => okResponse(closingStream([new Uint8Array([1])])));
     const rec = new NetworkRecorder();
     expect(rec.isRecording()).toBe(false);
-    rec.start('https://x/a.mp3');
+    rec.start('https://x/a.mp3', 'capture-test');
     expect(rec.isRecording()).toBe(true);
     await new Promise((r) => setTimeout(r, 5));
     await rec.stop();
@@ -147,8 +171,8 @@ describe('NetworkRecorder', () => {
   it('rejects a double start', () => {
     setFetch(async () => okResponse(closingStream([])));
     const rec = new NetworkRecorder();
-    rec.start('https://x/a.mp3');
-    expect(() => rec.start('https://x/b.mp3')).toThrow(/already recording/i);
+    rec.start('https://x/a.mp3', 'capture-test');
+    expect(() => rec.start('https://x/b.mp3', 'capture-test')).toThrow(/already recording/i);
   });
 
   it('throws when stopping without recording', async () => {

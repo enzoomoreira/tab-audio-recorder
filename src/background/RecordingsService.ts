@@ -18,8 +18,40 @@ const logger = createLogger('RecordingsService');
 // through the functions below, so persistence stays a single concern.
 const repository = new IndexedDBRepository();
 
-function generateId(): string {
-  return `rec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+export async function recoverCaptures(activeIds: string[]): Promise<void> {
+  await repository.interruptAllExcept(activeIds);
+}
+
+export async function interruptCapture(id: string): Promise<void> {
+  await repository.interrupt(id);
+}
+
+export async function discardCapture(id: string): Promise<void> {
+  await repository.discard(id);
+}
+
+export async function appendCapture(
+  tabId: number,
+  frameId: number,
+  payload: { captureId: string; sequence: number; blob: Blob; endedAt: number; startedAt: number },
+): Promise<ActionResult> {
+  try {
+    await repository.append(
+      payload.captureId,
+      tabId,
+      frameId,
+      payload.sequence,
+      payload.blob,
+      payload.endedAt,
+      payload.startedAt,
+    );
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: `Could not save audio chunk: ${error instanceof Error ? error.message : String(error)}. Previously saved audio remains in Recordings.`,
+    };
+  }
 }
 
 // --- Query passthroughs used by the background message router ---
@@ -31,21 +63,24 @@ export function listRecordings(
   return repository.list(filter, sort);
 }
 
-export function deleteRecording(id: string): Promise<void> {
-  return repository.deleteById(id);
+export async function deleteRecording(id: string): Promise<void> {
+  const metadata = await repository.getMetadataById(id);
+  if (metadata?.status === 'recording') throw new Error('Stop the recording before deleting it.');
+  await repository.deleteById(id);
 }
 
-export function getBlob(id: string): Promise<Blob | null> {
+export async function getBlob(id: string): Promise<Blob | null> {
+  const metadata = await repository.getMetadataById(id);
+  if (metadata?.status === 'recording') throw new Error('Stop the recording before playing it.');
   return repository.getBlobById(id);
 }
 
-/**
- * Persist a finished capture: build metadata from the tab, write it to
- * IndexedDB, then honor the auto-export and retention-cap settings. Tab
- * lifecycle is the caller's concern. A failed persistence is returned to the
- * caller so the UI cannot report success when the recording was not saved.
- */
-export async function saveCapture(tabId: number, result: CaptureResult): Promise<ActionResult> {
+export function getCaptureMetadata(id: string): Promise<RecordingMetadata | null> {
+  return repository.getMetadataById(id);
+}
+
+/** Allocate the recording before capture; the first chunk sets its actual start time. */
+export async function beginCapture(tabId: number, frameId: number): Promise<string> {
   let url = 'unknown';
   let title = 'Unknown';
   let host = 'unknown';
@@ -60,28 +95,36 @@ export async function saveCapture(tabId: number, result: CaptureResult): Promise
   }
 
   const metadata: RecordingMetadata = {
-    id: generateId(),
+    id: `rec_${crypto.randomUUID()}`,
     sourceUrl: url,
     sourceHost: host,
     sourceTitle: title,
-    mimeType: result.mimeType,
-    durationMs: result.durationMs,
-    sizeBytes: result.blob.size,
-    startedAt: result.startedAt,
-    endedAt: result.endedAt,
+    mimeType: '',
+    durationMs: 0,
+    sizeBytes: 0,
+    startedAt: Date.now(),
+    endedAt: Date.now(),
+    status: 'recording',
+    nextSequence: 0,
+    ownerTabId: tabId,
+    ownerFrameId: frameId,
   };
+  await repository.begin(metadata);
+  return metadata.id;
+}
 
-  const recording: Recording = { metadata, blob: result.blob };
-
+/** Commit completion without assembling or decoding the saved audio. */
+export async function saveCapture(
+  tabId: number,
+  frameId: number,
+  result: CaptureResult,
+): Promise<ActionResult> {
   try {
-    await repository.save(recording);
-    logger.info('Saved recording', metadata.id, 'from', host);
+    await repository.finalize(result.captureId, tabId, frameId, result.chunkCount, result.endedAt);
+    logger.info('Saved recording', result.captureId);
   } catch (err) {
-    const quota = err instanceof DOMException && err.name === 'QuotaExceededError';
     const msg = err instanceof Error ? err.message : String(err);
-    const error = quota
-      ? `Storage quota exceeded (${(metadata.sizeBytes / 1024 / 1024).toFixed(1)} MB). Delete old recordings or lower the bitrate.`
-      : `Could not save recording: ${msg}`;
+    const error = `Could not finish recording: ${msg}. Previously saved audio remains in Recordings.`;
     logger.error(error);
     return { ok: false, error };
   }
@@ -90,9 +133,12 @@ export async function saveCapture(tabId: number, result: CaptureResult): Promise
     const settings = await getSettings();
 
     if (settings.autoExport) {
-      const exportResult = await exportRecording(recording);
+      const exportResult = await exportRecordingById(result.captureId);
       if (!exportResult.ok) {
-        logger.warn('Auto-export failed for', metadata.id, ':', exportResult.error);
+        return {
+          ok: false,
+          error: `Recording saved in Recordings, but auto-export failed: ${exportResult.error}`,
+        };
       }
     }
 
@@ -106,17 +152,16 @@ export async function saveCapture(tabId: number, result: CaptureResult): Promise
 }
 
 /**
- * Decodes the recording, re-encodes it to the user's chosen export format
- * (WAV/MP3), and triggers a browser download using the template and subfolder
- * settings. The object URL is revoked once the download reaches a terminal
- * state.
+ * Exports original bytes or converts to WAV/MP3, then waits for the browser to
+ * confirm the file download. Persisted recordings remain available on failure.
  */
 export async function exportRecording(recording: Recording): Promise<ActionResult> {
   const settings = await getSettings();
+  const format = recording.metadata.status === 'interrupted' ? 'original' : settings.exportFormat;
 
   let encoded;
   try {
-    encoded = await encodeForExport(recording.blob, settings.exportFormat, {
+    encoded = await encodeForExport(recording.blob, format, {
       mp3Kbps: Math.round(settings.bitrate / 1000),
     });
   } catch (err) {
@@ -124,7 +169,7 @@ export async function exportRecording(recording: Recording): Promise<ActionResul
     logger.error('Encoding failed:', error);
     return {
       ok: false,
-      error: `Could not encode to ${settings.exportFormat.toUpperCase()}: ${error}`,
+      error: `Could not export ${format.toUpperCase()}: ${error}`,
     };
   }
 
@@ -135,19 +180,39 @@ export async function exportRecording(recording: Recording): Promise<ActionResul
 
   const url = URL.createObjectURL(encoded.blob);
   let downloadId: number | undefined;
-  const earlyCompletions = new Set<number>();
+  const earlyCompletions = new Map<number, ActionResult>();
   type DownloadDelta = Parameters<Parameters<typeof browser.downloads.onChanged.addListener>[0]>[0];
+  let settle!: (result: ActionResult) => void;
+  const completed = new Promise<ActionResult>((resolve) => {
+    settle = resolve;
+  });
   const cleanup = (): void => {
     URL.revokeObjectURL(url);
     browser.downloads.onChanged.removeListener(onChanged);
+    browser.runtime.onSuspend.removeListener(onSuspend);
   };
   const onChanged = (delta: DownloadDelta): void => {
     const state = delta.state?.current;
     if (state !== 'complete' && state !== 'interrupted') return;
-    if (downloadId === undefined) earlyCompletions.add(delta.id);
-    else if (delta.id === downloadId) cleanup();
+    const result: ActionResult =
+      state === 'complete'
+        ? { ok: true }
+        : {
+            ok: false,
+            error: `Download interrupted: ${delta.error?.current ?? 'cancelled or failed'}. The recording remains saved in Recordings.`,
+          };
+    if (downloadId === undefined) earlyCompletions.set(delta.id, result);
+    else if (delta.id === downloadId) settle(result);
+  };
+  const onSuspend = (): void => {
+    settle({
+      ok: false,
+      error:
+        'Download completion could not be confirmed. Check Firefox Downloads; the recording remains saved in Recordings.',
+    });
   };
   browser.downloads.onChanged.addListener(onChanged);
+  browser.runtime.onSuspend.addListener(onSuspend);
 
   try {
     downloadId = await browser.downloads.download({
@@ -158,24 +223,30 @@ export async function exportRecording(recording: Recording): Promise<ActionResul
     });
 
     if (downloadId == null) {
-      cleanup();
       return { ok: false, error: 'Download did not start' };
     }
 
-    if (earlyCompletions.has(downloadId)) cleanup();
+    const earlyResult = earlyCompletions.get(downloadId);
+    if (earlyResult) settle(earlyResult);
     earlyCompletions.clear();
 
-    logger.info('Export queued', recording.metadata.id, '->', path);
-    return { ok: true };
+    const result = await completed;
+    if (result.ok) logger.info('Download completed', recording.metadata.id, '->', path);
+    else logger.warn('Download failed', recording.metadata.id, result.error);
+    return result;
   } catch (err) {
-    cleanup();
     const error = err instanceof Error ? err.message : String(err);
     logger.error('Export failed:', error);
-    return { ok: false, error };
+    return { ok: false, error: `${error}. The recording remains saved in Recordings.` };
+  } finally {
+    cleanup();
   }
 }
 
 export async function exportRecordingById(id: string): Promise<ActionResult> {
+  const metadata = await repository.getMetadataById(id);
+  if (metadata?.status === 'recording')
+    return { ok: false, error: 'Stop the recording before exporting it.' };
   const recording = await repository.getById(id);
   if (!recording) return { ok: false, error: 'Recording not found' };
   return exportRecording(recording);
@@ -183,9 +254,12 @@ export async function exportRecordingById(id: string): Promise<ActionResult> {
 
 async function pruneOldRecordings(maxKeep: number): Promise<void> {
   const all = await repository.list(undefined, { field: 'startedAt', direction: 'asc' });
-  const excess = all.length - maxKeep;
+  const completed = all.filter(
+    (recording) => recording.status === undefined || recording.status === 'complete',
+  );
+  const excess = completed.length - maxKeep;
   if (excess <= 0) return;
-  const toDelete = all.slice(0, excess);
+  const toDelete = completed.slice(0, excess);
   logger.info(`Cleanup: deleting ${excess} oldest recordings (cap = ${maxKeep})`);
   await Promise.all(toDelete.map((m) => repository.deleteById(m.id)));
 }
