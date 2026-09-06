@@ -145,3 +145,40 @@ something Firefox will refuse to install anyway.
 
 Bump `version` in both `package.json` and `src/manifest.json` before each new
 submission — AMO rejects re-uploading an existing version.
+
+## 7. Automated release workflow
+
+`.github/workflows/release.yml` runs when a stable GitHub release is published,
+or manually with an existing tag. It checks out that tag, verifies both version
+fields, runs lint/typecheck/unit tests, builds both ZIPs and validates the extension.
+The ZIPs are available as the workflow's `mozilla-packages-vX.Y.Z` artifact for
+30 days. They are publisher artifacts, not signed Firefox installation downloads.
+
+Submission to AMO is opt-in. With `AMO_PUBLISH_ENABLED` absent or not `true`, the
+workflow only prepares the packages. This is the mode used for the manual 0.1.2
+submission.
+
+To enable future automatic updates:
+
+1. Create credentials at [Mozilla API credentials](https://addons.mozilla.org/developers/addon/api/key/).
+2. In GitHub repository Settings -> Secrets and variables -> Actions, add secrets
+   `AMO_JWT_ISSUER` and `AMO_JWT_SECRET` with the corresponding Mozilla values.
+3. Add the repository variable `AMO_PUBLISH_ENABLED` with value `true`.
+4. Bump versions, commit, tag and publish the next GitHub release. Keep the same
+   Gecko ID so the submission updates the existing add-on.
+
+The workflow calls `web-ext sign --channel listed --upload-source-code ...` with
+reviewer instructions from `.github/amo-metadata.json`. Credentials are passed
+only to the submission step through environment variables. Do not commit them.
+The build toolchain is pinned to Bun 1.3.11 in both workflows.
+
+`--approval-timeout 0` means the job submits the version without waiting for
+Mozilla's review. A successful submission does not mean the version is already
+public. Check Developer Hub for review status. If a submission was accepted,
+do not rerun it for that same version; AMO rejects duplicate versions.
+
+No Dev Hub credentials are needed for GitHub release creation or package builds.
+Source ZIPs always archive the exact checked-out tag commit.
+
+References: [web-ext sign](https://extensionworkshop.com/documentation/develop/web-ext-command-reference/#web-ext-sign)
+and [GitHub release events](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#release).

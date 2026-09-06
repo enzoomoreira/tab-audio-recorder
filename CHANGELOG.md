@@ -1,5 +1,16 @@
 # Changelog
 
+## [2026-09-06 08:55]
+
+### Added
+
+- Release workflow builds and validates extension/source packages from the release
+  tag, with optional submission to the existing Mozilla listing through web-ext.
+
+### Changed
+
+- Prepare version 0.1.2 and pin CI builds to Bun 1.3.11 for reproducible releases.
+
 ## [2026-09-06 08:40]
 
 ### Fixed

@@ -1,0 +1,65 @@
+name: Release packages and Mozilla submission
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to package (for example v0.1.2)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag || github.event.release.tag_name }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+      - name: Verify release versions
+        run: bun run scripts/verify-release.ts
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+      - run: bunx tsc --noEmit
+      - run: bun run test
+      - run: bun run package
+      - run: bun run lint:ext
+      - run: bun run package:source
+      - name: Save packages for the publisher
+        uses: actions/upload-artifact@v4
+        with:
+          name: mozilla-packages-${{ env.RELEASE_TAG }}
+          path: web-ext-artifacts/*.zip
+          if-no-files-found: error
+          retention-days: 30
+      - name: Submit to the existing Mozilla listing
+        if: vars.AMO_PUBLISH_ENABLED == 'true'
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          test -n "$WEB_EXT_API_KEY" || { echo 'Missing AMO_JWT_ISSUER secret'; exit 1; }
+          test -n "$WEB_EXT_API_SECRET" || { echo 'Missing AMO_JWT_SECRET secret'; exit 1; }
+          bunx web-ext sign --source-dir dist --channel listed \
+            --upload-source-code web-ext-artifacts/tab-audio-recorder-source.zip \
+            --amo-metadata .github/amo-metadata.json \
+            --approval-timeout 0 --timeout 600000 --no-input
+      - name: Manual Mozilla submission
+        if: vars.AMO_PUBLISH_ENABLED != 'true'
+        run: echo 'Packages are ready. Mozilla submission is disabled; upload them through Developer Hub.'
