@@ -22,6 +22,8 @@
 - WAV/MP3 encoding runs in a dedicated Worker, with decoding and conversion
   serialized to one job at a time. Original exports bypass this queue. Conversion
   still decodes the full recording and can consume substantial memory.
+- Active conversions keep the Firefox event page alive after the manager closes;
+  that activity stops when the conversion completes or fails.
 
 ## [2026-09-06 09:34]
 

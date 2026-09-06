@@ -256,6 +256,30 @@ compare their memory use with Original and do not describe them as streaming exp
 Record actual durations/results; no fixed long-recording reliability threshold is
 established by these implementation checks.
 
+`bun run scripts/debug/verify-export-worker-firefox.ts` installs the production
+build in an isolated Firefox profile, exports five minutes of stereo PCM to MP3
+while a second capture keeps committing chunks, then verifies the downloaded MP3
+by decoding the actual file and exports the captured audio to WAV. Build `dist`
+first. It uses example.com and generated audio, without a local server.
+
+If the host audio device cannot start, set `QA_MOCK_AUDIO=true` to use Firefox's
+`media.cubeb.force_mock_context` test backend in that isolated profile. This
+validates the real extension, Worker, storage and download pipeline, but does
+not validate the host audio device. On 2026-09-06 this mode exported a 300-second
+source in 22.6 seconds while another capture committed 231,803 bytes; the maximum
+sampled background response time was 47 ms. The downloaded MP3 decoded to
+300.042 seconds with nonzero audio; the WAV's RIFF data size matched its bytes.
+The default device's `AudioContext.resume()` also stalled without the extension,
+so that run is not claimed as hardware audio validation.
+
+An additional closed-view check used a 600-second stereo source and a 25-second
+event-page idle timeout: the MP3 download completed (9,600,522 bytes) with the
+manager closed and no capture running. Without active-job API activity, an
+accelerated one-second idle check suspended the background and produced no
+download. The conversion now makes a lightweight runtime API call every 20
+seconds and clears that interval in `finally`; Workers alone do not keep a
+Firefox event page alive.
+
 ### Add a filename template variable
 
 1. Add the token to `TEMPLATE_VARIABLES` and a resolver to `RESOLVERS` in
