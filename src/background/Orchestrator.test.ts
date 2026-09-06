@@ -64,6 +64,7 @@ async function loadOrchestrator(stubs: BrowserStubs) {
   ).URL.revokeObjectURL = () => undefined;
   (globalThis as { browser: unknown }).browser = {
     runtime: { getURL: (p: string) => p },
+    alarms: { create: (): void => {}, clear: async (): Promise<boolean> => true },
     tabs: {
       sendMessage: stubs.sendMessage,
       get: async () => ({ url: 'http://example.com', title: 'Test' }),

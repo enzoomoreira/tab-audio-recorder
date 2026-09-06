@@ -4,12 +4,14 @@ import { createLogger } from './Logger';
 const logger = createLogger('SessionState');
 const KEY = 'recordingState';
 
-// Serializable form of the three Maps (storage holds JSON, so Maps become
+// Serializable form of the Maps (storage holds JSON, so Maps become
 // entry arrays and are rebuilt on hydrate).
 interface Snapshot {
   tabStates: [number, TabRecordingState][];
   activeFrames: [number, number][];
   tabStreamURLs: [number, [number, string][]][];
+  deadlines?: [number, number][];
+  errors?: [number, string][];
 }
 
 /**
@@ -25,6 +27,8 @@ export class SessionState {
   private tabStates = new Map<number, TabRecordingState>();
   private activeFrames = new Map<number, number>();
   private tabStreamURLs = new Map<number, Map<number, string>>();
+  private deadlines = new Map<number, number>();
+  private errors = new Map<number, string>();
 
   async hydrate(): Promise<void> {
     try {
@@ -34,6 +38,8 @@ export class SessionState {
       this.tabStates = new Map(snap.tabStates);
       this.activeFrames = new Map(snap.activeFrames);
       this.tabStreamURLs = new Map(snap.tabStreamURLs.map(([tabId, e]) => [tabId, new Map(e)]));
+      this.deadlines = new Map(snap.deadlines);
+      this.errors = new Map(snap.errors);
       logger.info('Rehydrated state for', this.tabStates.size, 'tab(s)');
     } catch (err) {
       logger.warn('Could not hydrate session state:', err);
@@ -45,6 +51,8 @@ export class SessionState {
       tabStates: [...this.tabStates],
       activeFrames: [...this.activeFrames],
       tabStreamURLs: [...this.tabStreamURLs].map(([tabId, e]) => [tabId, [...e]]),
+      deadlines: [...this.deadlines],
+      errors: [...this.errors],
     };
     void browser.storage.session.set({ [KEY]: snap }).catch((err: unknown) => {
       logger.warn('Could not persist session state:', err);
@@ -55,8 +63,32 @@ export class SessionState {
     return this.tabStates.get(tabId) ?? 'idle';
   }
 
+  deadline(tabId: number): number | undefined {
+    return this.deadlines.get(tabId);
+  }
+
+  setDeadline(tabId: number, deadline: number): void {
+    this.deadlines.set(tabId, deadline);
+    this.persist();
+  }
+
+  clearDeadline(tabId: number): void {
+    this.deadlines.delete(tabId);
+    this.persist();
+  }
+
+  error(tabId: number): string | undefined {
+    return this.errors.get(tabId);
+  }
+
+  setError(tabId: number, error: string): void {
+    this.errors.set(tabId, error);
+    this.persist();
+  }
+
   setState(tabId: number, state: TabRecordingState): void {
     this.tabStates.set(tabId, state);
+    if (state !== 'idle') this.errors.delete(tabId);
     this.persist();
   }
 
@@ -83,10 +115,20 @@ export class SessionState {
     return this.tabStreamURLs.get(tabId);
   }
 
+  clearStreamURL(tabId: number, frameId: number): void {
+    const perFrame = this.tabStreamURLs.get(tabId);
+    if (!perFrame) return;
+    perFrame.delete(frameId);
+    if (perFrame.size === 0) this.tabStreamURLs.delete(tabId);
+    this.persist();
+  }
+
   clear(tabId: number): void {
     this.tabStates.delete(tabId);
     this.activeFrames.delete(tabId);
     this.tabStreamURLs.delete(tabId);
+    this.deadlines.delete(tabId);
+    this.errors.delete(tabId);
     this.persist();
   }
 

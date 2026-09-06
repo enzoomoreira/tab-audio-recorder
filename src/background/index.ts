@@ -3,10 +3,13 @@ import {
   stopRecording,
   toggleRecording,
   armRecording,
-  disarmRecording,
   onArmedStarted,
   saveRecording,
   getTabState,
+  getTabError,
+  onRecordingError,
+  onDeadlineAlarm,
+  onFrameNavigated,
   clearTab,
   hydrate,
   onMediaURLDetected,
@@ -41,7 +44,7 @@ async function openApp(section: AppSection): Promise<void> {
 }
 
 // --- Boot: rehydrate state (survives MV3 suspension), load settings ---
-void (async () => {
+const ready = (async (): Promise<void> => {
   await hydrate();
   const settings = await getSettings();
   setVerbose(settings.verboseLogging);
@@ -57,107 +60,112 @@ onSettingsChanged((settings) => {
 // switch narrows each case so payloads are accessed without `as` casts.
 browser.runtime.onMessage.addListener(
   (message: InboundMessage, sender): Promise<unknown> | undefined => {
-    switch (message.type) {
-      // --- Popup ---
-      case 'GET_TAB_STATE':
-        return Promise.resolve({ state: getTabState(message.payload.tabId) });
+    return ready.then<unknown>(() => {
+      switch (message.type) {
+        // --- Popup ---
+        case 'GET_TAB_STATE':
+          return {
+            state: getTabState(message.payload.tabId),
+            error: getTabError(message.payload.tabId),
+          };
 
-      case 'TOGGLE_RECORDING':
-        return toggleRecording(message.payload.tabId);
+        case 'TOGGLE_RECORDING':
+          return toggleRecording(message.payload.tabId);
 
-      case 'OPEN_APP':
-        void openApp(message.payload.section);
-        return undefined;
+        case 'OPEN_APP':
+          return openApp(message.payload.section);
 
-      // --- Content script ---
-      case 'RECORDING_COMPLETE': {
-        const tabId = sender.tab?.id;
-        if (tabId != null) {
-          void saveRecording(tabId, message.payload).catch((err: unknown) => {
-            logger.error('saveRecording threw for tab', tabId, err);
-            clearTab(tabId);
-          });
+        // --- Content script ---
+        case 'RECORDING_COMPLETE': {
+          const tabId = sender.tab?.id;
+          if (tabId != null) {
+            return saveRecording(tabId, message.payload).catch((err: unknown) => {
+              logger.error('saveRecording threw for tab', tabId, err);
+            });
+          }
+          return undefined;
         }
-        return undefined;
-      }
 
-      case 'RECORDING_ERROR': {
-        const tabId = sender.tab?.id;
-        logger.error('Recording error on tab', tabId, message.payload.reason);
-        if (tabId != null) {
-          // An armed auto-start that failed (e.g. DRM): disarm every frame.
-          if (getTabState(tabId) === 'armed') void disarmRecording(tabId);
-          else clearTab(tabId);
+        case 'RECORDING_ERROR': {
+          const tabId = sender.tab?.id;
+          logger.error('Recording error on tab', tabId, message.payload.reason);
+          if (tabId != null) {
+            return onRecordingError(tabId, sender.frameId ?? 0, message.payload.reason);
+          }
+          return undefined;
         }
-        return undefined;
+
+        case 'ARMED_STARTED': {
+          const tabId = sender.tab?.id;
+          if (tabId != null) return onArmedStarted(tabId, sender.frameId ?? 0);
+          return undefined;
+        }
+
+        // --- Manager ---
+        case 'LIST_RECORDINGS':
+          return listRecordings(message.payload.filter, message.payload.sort);
+
+        case 'DELETE_RECORDING':
+          return deleteRecording(message.payload.id);
+
+        case 'GET_BLOB':
+          return getBlob(message.payload.id);
+
+        case 'EXPORT_RECORDING':
+          return exportRecordingById(message.payload.id);
+
+        // --- Test bridge (E2E builds only; bodies stripped from production) ---
+        case 'TEST_START_RECORDING': {
+          if (!__TEST_BRIDGE__) return undefined;
+          const tabId = sender.tab?.id;
+          return tabId != null
+            ? startRecording(tabId)
+            : Promise.resolve({ ok: false, error: 'no tab' });
+        }
+
+        case 'TEST_STOP_RECORDING': {
+          if (!__TEST_BRIDGE__) return undefined;
+          const tabId = sender.tab?.id;
+          return tabId != null
+            ? stopRecording(tabId)
+            : Promise.resolve({ ok: false, error: 'no tab' });
+        }
+
+        case 'TEST_ARM_RECORDING': {
+          if (!__TEST_BRIDGE__) return undefined;
+          const tabId = sender.tab?.id;
+          return tabId != null
+            ? armRecording(tabId)
+            : Promise.resolve({ ok: false, error: 'no tab' });
+        }
+
+        case 'TEST_GET_LOGS': {
+          if (!__TEST_BRIDGE__) return undefined;
+          return Promise.resolve({ logs: getLogBuffer() });
+        }
+
+        default:
+          return undefined;
       }
-
-      case 'ARMED_STARTED': {
-        const tabId = sender.tab?.id;
-        if (tabId != null) void onArmedStarted(tabId, sender.frameId ?? 0);
-        return undefined;
-      }
-
-      // --- Manager ---
-      case 'LIST_RECORDINGS':
-        return listRecordings(message.payload.filter, message.payload.sort);
-
-      case 'DELETE_RECORDING':
-        return deleteRecording(message.payload.id);
-
-      case 'GET_BLOB':
-        return getBlob(message.payload.id);
-
-      case 'EXPORT_RECORDING':
-        return exportRecordingById(message.payload.id);
-
-      // --- Test bridge (E2E builds only; bodies stripped from production) ---
-      case 'TEST_START_RECORDING': {
-        if (!__TEST_BRIDGE__) return undefined;
-        const tabId = sender.tab?.id;
-        return tabId != null
-          ? startRecording(tabId)
-          : Promise.resolve({ ok: false, error: 'no tab' });
-      }
-
-      case 'TEST_STOP_RECORDING': {
-        if (!__TEST_BRIDGE__) return undefined;
-        const tabId = sender.tab?.id;
-        return tabId != null
-          ? stopRecording(tabId)
-          : Promise.resolve({ ok: false, error: 'no tab' });
-      }
-
-      case 'TEST_ARM_RECORDING': {
-        if (!__TEST_BRIDGE__) return undefined;
-        const tabId = sender.tab?.id;
-        return tabId != null
-          ? armRecording(tabId)
-          : Promise.resolve({ ok: false, error: 'no tab' });
-      }
-
-      case 'TEST_GET_LOGS': {
-        if (!__TEST_BRIDGE__) return undefined;
-        return Promise.resolve({ logs: getLogBuffer() });
-      }
-
-      default:
-        return undefined;
-    }
+    });
   },
 );
 
-browser.tabs.onRemoved.addListener(clearTab);
+browser.tabs.onRemoved.addListener((tabId) => {
+  void ready.then(() => clearTab(tabId));
+});
 
-// Clear recording state when the top frame navigates away: the content script
+browser.alarms.onAlarm.addListener((alarm) => {
+  void ready.then(() => onDeadlineAlarm(alarm.name));
+});
+
+// Clear recording state when the active frame navigates away: the content script
 // (and any in-flight MediaRecorder) is destroyed, so the orchestrator must not
 // keep believing the tab is recording.
 browser.webNavigation.onCommitted.addListener((details) => {
-  if (details.frameId !== 0) return;
-  if (getTabState(details.tabId) !== 'idle') {
-    logger.info('Top frame navigated mid-recording, clearing state for tab', details.tabId);
-  }
-  clearTab(details.tabId);
+  void ready.then(() => {
+    onFrameNavigated(details.tabId, details.frameId);
+  });
 });
 
 // --- webRequest: detect audio stream URLs by Content-Type ---
@@ -167,7 +175,7 @@ browser.webRequest.onHeadersReceived.addListener(
     const ct =
       details.responseHeaders?.find((h) => h.name.toLowerCase() === 'content-type')?.value ?? '';
     if (ct.startsWith('audio/') || ct.includes('mpegURL') || ct.includes('ogg')) {
-      onMediaURLDetected(details.tabId, details.frameId, details.url);
+      void ready.then(() => onMediaURLDetected(details.tabId, details.frameId, details.url));
     }
   },
   { urls: ['<all_urls>'] },
@@ -180,6 +188,7 @@ browser.webRequest.onHeadersReceived.addListener(
 // closed.
 browser.commands.onCommand.addListener(async (command) => {
   if (command !== 'record-toggle') return;
+  await ready;
 
   const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) {
