@@ -155,7 +155,8 @@ describe('Orchestrator.startRecording', () => {
     const orch = await loadOrchestrator({
       sendMessage: async (_t, msg) => {
         if (msg.type === 'CHECK_MEDIA') return { found: false };
-        if (msg.type === 'START_WEBAUDIO_CAPTURE') return { ok: false, error: 'no ctx' };
+        if (msg.type === 'START_WEBAUDIO_CAPTURE')
+          return { ok: false, armable: true, error: 'no ctx' };
         return undefined;
       },
     });
@@ -186,7 +187,8 @@ describe('Orchestrator.startRecording', () => {
       sendMessage: async (_t, msg) => {
         if (msg.type === 'CHECK_MEDIA') return { found: false };
         if (msg.type === 'START_NETWORK_CAPTURE') return { ok: false, error: 'fetch refused' };
-        if (msg.type === 'START_WEBAUDIO_CAPTURE') return { ok: false, error: 'no ctx' };
+        if (msg.type === 'START_WEBAUDIO_CAPTURE')
+          return { ok: false, armable: true, error: 'no ctx' };
         return undefined;
       },
     });
@@ -376,7 +378,8 @@ describe('Orchestrator: arm and toggle', () => {
     const orch = await loadOrchestrator({
       sendMessage: async (_t, msg, opts) => {
         if (msg.type === 'CHECK_MEDIA') return { found: false, playing: false };
-        if (msg.type === 'START_WEBAUDIO_CAPTURE') return { ok: false, error: 'no ctx' };
+        if (msg.type === 'START_WEBAUDIO_CAPTURE')
+          return { ok: false, armable: true, error: 'no ctx' };
         if (msg.type === 'ARM_CAPTURE') {
           armedFrames.push(opts?.frameId ?? -1);
           return { ok: true };
@@ -395,7 +398,8 @@ describe('Orchestrator: arm and toggle', () => {
     const orch = await loadOrchestrator({
       sendMessage: async (_t, msg, opts) => {
         if (msg.type === 'CHECK_MEDIA') return { found: false, playing: false };
-        if (msg.type === 'START_WEBAUDIO_CAPTURE') return { ok: false, error: 'no ctx' };
+        if (msg.type === 'START_WEBAUDIO_CAPTURE')
+          return { ok: false, armable: true, error: 'no ctx' };
         if (msg.type === 'ARM_CAPTURE') return { ok: true };
         if (msg.type === 'DISARM_CAPTURE') {
           disarmedFrames.push(opts?.frameId ?? -1);
@@ -436,7 +440,8 @@ describe('Orchestrator: arm and toggle', () => {
       getAllFrames: async () => [{ frameId: 0 }, { frameId: 3 }],
       sendMessage: async (_t, msg, opts) => {
         if (msg.type === 'CHECK_MEDIA') return { found: false, playing: false };
-        if (msg.type === 'START_WEBAUDIO_CAPTURE') return { ok: false, error: 'no ctx' };
+        if (msg.type === 'START_WEBAUDIO_CAPTURE')
+          return { ok: false, armable: true, error: 'no ctx' };
         if (msg.type === 'ARM_CAPTURE') {
           if (opts?.frameId === 3) captureId = msg.payload?.['captureId'] as string;
           return { ok: true };

@@ -171,7 +171,11 @@ if (WIN.__tabAudioRecorderLoaded) {
       const rec = new WebAudioRecorder();
       const hasContexts = await rec.probe();
       if (!hasContexts) {
-        return { ok: false, error: 'No AudioContext detected on this page' };
+        return {
+          ok: false,
+          armable: true,
+          error: 'No active Web Audio output detected on this page',
+        };
       }
       await rec.start(bitrate, captureId);
       activeRecorder = rec;

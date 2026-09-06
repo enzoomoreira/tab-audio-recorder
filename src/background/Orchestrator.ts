@@ -348,6 +348,7 @@ export async function startRecording(tabId: number): Promise<ActionResult> {
 
   // --- Strategy 3: Web Audio API hook ---
   const frameIds = await listFrameIds(tabId);
+  let strategy3Error: string | undefined;
   for (const frameId of frameIds) {
     const reply = await startInFrame(
       tabId,
@@ -361,6 +362,7 @@ export async function startRecording(tabId: number): Promise<ActionResult> {
       logger.info('Recording started (Web Audio) tab', tabId, 'frame', frameId);
       return { ok: true };
     }
+    if (reply && !reply.ok && !reply.armable) strategy3Error ??= reply.error;
   }
 
   // A real stream-capture failure (a source existed but failed) is surfaced as-is
@@ -369,8 +371,8 @@ export async function startRecording(tabId: number): Promise<ActionResult> {
   if (attempts.get(tabId) !== attempt) {
     return { ok: false, error: 'Recording cancelled because the tab changed.' };
   }
-  if (strategy2Error) {
-    return { ok: false, error: strategy2Error };
+  if (strategy3Error || strategy2Error) {
+    return { ok: false, error: strategy3Error ?? strategy2Error! };
   }
   return {
     ok: false,
