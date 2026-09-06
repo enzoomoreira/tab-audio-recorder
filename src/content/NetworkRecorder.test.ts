@@ -169,7 +169,7 @@ describe('NetworkRecorder', () => {
   });
 
   it('rejects a double start', async () => {
-    setFetch(async () => okResponse(closingStream([])));
+    setFetch(async () => okResponse(closingStream([new Uint8Array([1])])));
     const rec = new NetworkRecorder();
     await rec.start('https://x/a.mp3', 'capture-test');
     await expect(rec.start('https://x/b.mp3', 'capture-test')).rejects.toThrow(

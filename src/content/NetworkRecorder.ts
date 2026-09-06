@@ -47,6 +47,7 @@ export class NetworkRecorder implements INetworkRecorder {
     this.mimeType = guessMimeType(url);
 
     const timer = setTimeout((): void => controller.abort(), START_TIMEOUT_MS);
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     try {
       const res = await fetch(url, { signal: controller.signal });
       if (!res.ok || !res.body) {
@@ -57,9 +58,13 @@ export class NetworkRecorder implements INetworkRecorder {
         throw new Error('Playlists require media or Web Audio capture');
       }
       if (contentType && contentType !== 'application/octet-stream') this.mimeType = contentType;
-      this.fetchDone = this.streamFetch(res.body, controller.signal);
+      reader = res.body.getReader();
+      const first = await reader.read();
+      if (first.done) throw new Error('Stream returned no audio');
+      this.fetchDone = this.streamFetch(reader, first, controller.signal);
     } catch (error) {
       controller.abort();
+      reader?.releaseLock();
       this.sink.dispose();
       this.sink = null;
       this.controller = null;
@@ -70,11 +75,15 @@ export class NetworkRecorder implements INetworkRecorder {
     logger.info('Started network recording:', url);
   }
 
-  private async streamFetch(body: ReadableStream<Uint8Array>, signal: AbortSignal): Promise<void> {
-    const reader = body.getReader();
+  private async streamFetch(
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    first: ReadableStreamReadResult<Uint8Array>,
+    signal: AbortSignal,
+  ): Promise<void> {
     try {
+      let next = first;
       while (true) {
-        const { done, value } = await reader.read();
+        const { done, value } = next;
         if (done || signal.aborted) {
           break;
         }
@@ -87,6 +96,7 @@ export class NetworkRecorder implements INetworkRecorder {
             this.chunkCount++;
           }
         }
+        next = await reader.read();
       }
 
       logger.debug('Stream ended, total chunks:', this.chunkCount);
