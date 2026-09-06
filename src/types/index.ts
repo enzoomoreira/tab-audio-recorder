@@ -64,7 +64,7 @@ export interface IRecorder {
 }
 
 export interface INetworkRecorder extends IRecorder {
-  start(url: string, captureId: string): void;
+  start(url: string, captureId: string): Promise<void>;
 }
 
 // === Message bus ===

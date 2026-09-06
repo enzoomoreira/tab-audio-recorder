@@ -151,7 +151,7 @@ if (WIN.__tabAudioRecorderLoaded) {
     }
     try {
       const rec = new NetworkRecorder();
-      rec.start(url, captureId);
+      await rec.start(url, captureId);
       activeRecorder = rec;
       activeCaptureId = captureId;
       wireErrors(rec, captureId);

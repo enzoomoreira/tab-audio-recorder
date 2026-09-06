@@ -83,7 +83,7 @@ describe('NetworkRecorder', () => {
       okResponse(closingStream([new Uint8Array([1, 2, 3]), new Uint8Array([4, 5])])),
     );
     const rec = new NetworkRecorder();
-    rec.start('https://radio.example/stream.mp3', 'capture-test');
+    await rec.start('https://radio.example/stream.mp3', 'capture-test');
     // Let the self-closing stream drain.
     await new Promise((r) => setTimeout(r, 10));
     const result = await rec.stop();
@@ -108,7 +108,7 @@ describe('NetworkRecorder', () => {
     for (const [url, mime] of cases) {
       setFetch(async () => okResponse(closingStream([new Uint8Array([0])])));
       const rec = new NetworkRecorder();
-      rec.start(url, 'capture-test');
+      await rec.start(url, 'capture-test');
       await new Promise((r) => setTimeout(r, 5));
       const result = await rec.stop();
       expect(result.mimeType).toBe(mime);
@@ -120,14 +120,14 @@ describe('NetworkRecorder', () => {
       okResponse(openUntilAbort(init.signal, [new Uint8Array([1, 2]), new Uint8Array([3, 4, 5])])),
     );
     const rec = new NetworkRecorder();
-    rec.start('https://radio.example/live', 'capture-test');
+    await rec.start('https://radio.example/live', 'capture-test');
     await new Promise((r) => setTimeout(r, 10));
     const result = await rec.stop();
     expect(new Blob(savedChunks).size).toBe(5);
     expect(result.chunkCount).toBe(2);
   });
 
-  it('reports onError and rejects stop when the response is not ok', async () => {
+  it('rejects start without a mid-capture error when the response is not ok', async () => {
     setFetch(
       async () =>
         ({ ok: false, status: 404, statusText: 'Not Found', body: null }) as unknown as Response,
@@ -135,44 +135,47 @@ describe('NetworkRecorder', () => {
     const rec = new NetworkRecorder();
     const errors: string[] = [];
     rec.onError = (reason) => errors.push(reason);
-    rec.start('https://radio.example/missing.mp3', 'capture-test');
-    await new Promise((r) => setTimeout(r, 10));
-    await expect(rec.stop()).rejects.toThrow(/404/);
+    await expect(rec.start('https://radio.example/missing.mp3', 'capture-test')).rejects.toThrow(
+      /404/,
+    );
+    expect(rec.isRecording()).toBe(false);
     expect(savedChunks).toHaveLength(0);
-    expect(errors).toHaveLength(1);
-    expect(errors[0]).toMatch(/404/);
+    expect(errors).toHaveLength(0);
   });
 
-  it('reports onError when the fetch rejects with a non-abort error', async () => {
+  it('rejects start and releases the recorder when the fetch fails', async () => {
     setFetch(async () => {
       throw new Error('network down');
     });
     const rec = new NetworkRecorder();
     const errors: string[] = [];
     rec.onError = (reason) => errors.push(reason);
-    rec.start('https://radio.example/stream.mp3', 'capture-test');
-    await new Promise((r) => setTimeout(r, 10));
-    await expect(rec.stop()).rejects.toThrow(/network down/);
-    expect(errors).toHaveLength(1);
-    expect(errors[0]).toMatch(/network down/);
+    await expect(rec.start('https://radio.example/stream.mp3', 'capture-test')).rejects.toThrow(
+      /network down/,
+    );
+    expect(rec.isRecording()).toBe(false);
+    expect(errors).toHaveLength(0);
   });
 
   it('tracks isRecording across start/stop', async () => {
     setFetch(async () => okResponse(closingStream([new Uint8Array([1])])));
     const rec = new NetworkRecorder();
     expect(rec.isRecording()).toBe(false);
-    rec.start('https://x/a.mp3', 'capture-test');
+    await rec.start('https://x/a.mp3', 'capture-test');
     expect(rec.isRecording()).toBe(true);
     await new Promise((r) => setTimeout(r, 5));
     await rec.stop();
     expect(rec.isRecording()).toBe(false);
   });
 
-  it('rejects a double start', () => {
+  it('rejects a double start', async () => {
     setFetch(async () => okResponse(closingStream([])));
     const rec = new NetworkRecorder();
-    rec.start('https://x/a.mp3', 'capture-test');
-    expect(() => rec.start('https://x/b.mp3', 'capture-test')).toThrow(/already recording/i);
+    await rec.start('https://x/a.mp3', 'capture-test');
+    await expect(rec.start('https://x/b.mp3', 'capture-test')).rejects.toThrow(
+      /already recording/i,
+    );
+    await rec.stop();
   });
 
   it('throws when stopping without recording', async () => {

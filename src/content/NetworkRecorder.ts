@@ -3,6 +3,16 @@ import { createLogger } from '../shared/Logger';
 import type { INetworkRecorder, CaptureResult } from '../types';
 
 const logger = createLogger('NetworkRecorder');
+const START_TIMEOUT_MS = 10_000;
+
+function isPlaylist(url: string, contentType = ''): boolean {
+  return (
+    /\.m3u8?(?:[?#]|$)/i.test(url) ||
+    /^(?:application\/(?:vnd\.apple\.mpegurl|x-mpegurl)|audio\/(?:mpegurl|x-mpegurl))$/.test(
+      contentType,
+    )
+  );
+}
 
 function guessMimeType(url: string): string {
   const path = url.toLowerCase().split('?')[0] ?? '';
@@ -24,36 +34,48 @@ export class NetworkRecorder implements INetworkRecorder {
   // Invoked if the stream fetch fails mid-capture (not via stop()).
   onError: ((reason: string) => void) | null = null;
 
-  start(url: string, captureId: string): void {
+  async start(url: string, captureId: string): Promise<void> {
     if (this.controller) throw new Error('Already recording');
+    if (isPlaylist(url)) throw new Error('Playlists require media or Web Audio capture');
 
-    this.controller = new AbortController();
+    const controller = new AbortController();
+    this.controller = controller;
     this.sink = new ChunkSink(captureId);
     this.chunkCount = 0;
     this.failure = null;
     this.startedAt = Date.now();
     this.mimeType = guessMimeType(url);
 
-    // Fire-and-forget: fetchDone resolves when stream ends or is aborted
-    this.fetchDone = this.streamFetch(url, this.controller.signal);
+    const timer = setTimeout((): void => controller.abort(), START_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      if (!res.ok || !res.body) {
+        throw new Error(`Stream fetch failed: ${res.status} ${res.statusText}`);
+      }
+      const contentType = res.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
+      if (isPlaylist(res.url || url, contentType)) {
+        throw new Error('Playlists require media or Web Audio capture');
+      }
+      if (contentType && contentType !== 'application/octet-stream') this.mimeType = contentType;
+      this.fetchDone = this.streamFetch(res.body, controller.signal);
+    } catch (error) {
+      controller.abort();
+      this.sink.dispose();
+      this.sink = null;
+      this.controller = null;
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
     logger.info('Started network recording:', url);
   }
 
-  private async streamFetch(url: string, signal: AbortSignal): Promise<void> {
+  private async streamFetch(body: ReadableStream<Uint8Array>, signal: AbortSignal): Promise<void> {
+    const reader = body.getReader();
     try {
-      const res = await fetch(url, { signal });
-      if (!res.ok || !res.body) {
-        logger.error('Fetch failed:', res.status, res.statusText);
-        throw new Error(`Stream fetch failed: ${res.status} ${res.statusText}`);
-      }
-
-      const contentType = res.headers.get('content-type')?.split(';')[0]?.trim();
-      if (contentType && contentType !== 'application/octet-stream') this.mimeType = contentType;
-      const reader = res.body.getReader();
       while (true) {
         const { done, value } = await reader.read();
         if (done || signal.aborted) {
-          reader.releaseLock();
           break;
         }
         if (value) {
@@ -78,6 +100,8 @@ export class NetworkRecorder implements INetworkRecorder {
         logger.error('Stream error:', msg);
         this.onError?.(`Stream error: ${msg}`);
       }
+    } finally {
+      reader.releaseLock();
     }
   }
 
