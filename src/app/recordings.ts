@@ -17,12 +17,15 @@ const sortDirEl = document.getElementById('sortDir') as HTMLSelectElement;
 let debounceHandle: ReturnType<typeof setTimeout>;
 let loadRevision = 0;
 let playerRevision = 0;
+let initialized = false;
+let refreshTimer: ReturnType<typeof setInterval> | undefined;
+let refreshing = false;
+const cards = new Map<string, { signature: string; element: HTMLLIElement; player: AudioPlayer }>();
 
 // Object URL cache: tracks URLs created for blobs so we can revoke on delete.
 const objectURLs = new Map<string, string>();
 
-// Live players for the currently rendered cards. Destroyed before each rebuild
-// so reloading the list (filter/sort change) doesn't orphan <audio> elements.
+// Unchanged cards retain their players across refreshes and sort changes.
 const players: AudioPlayer[] = [];
 
 function destroyPlayers(): void {
@@ -31,6 +34,7 @@ function destroyPlayers(): void {
   players.length = 0;
   for (const url of objectURLs.values()) URL.revokeObjectURL(url);
   objectURLs.clear();
+  cards.clear();
 }
 
 function debounce(fn: () => void, ms: number): () => void {
@@ -47,8 +51,9 @@ async function loadBlobURL(id: string): Promise<string | null> {
   if (cached) return cached;
 
   const revision = playerRevision;
+  const card = cards.get(id);
   const blob = await sendToBackground({ type: 'GET_BLOB', payload: { id } });
-  if (!blob || revision !== playerRevision) return null;
+  if (!blob || revision !== playerRevision || cards.get(id) !== card) return null;
 
   const url = URL.createObjectURL(blob);
   objectURLs.set(id, url);
@@ -63,6 +68,7 @@ function exportRecording(id: string): Promise<ActionResult> {
 
 async function deleteRecording(id: string): Promise<void> {
   await sendToBackground({ type: 'DELETE_RECORDING', payload: { id } });
+  cards.delete(id);
   const url = objectURLs.get(id);
   if (url) {
     URL.revokeObjectURL(url);
@@ -88,12 +94,12 @@ const cardActions: CardActions = {
   },
 };
 
-async function loadRecordings(): Promise<void> {
+async function loadRecordings(background = false): Promise<void> {
   const revision = ++loadRevision;
-  loadingMsg.textContent = 'Loading...';
-  loadingMsg.hidden = false;
-  emptyMsg.hidden = true;
-  listEl.hidden = true;
+  if (!background) {
+    loadingMsg.textContent = 'Loading...';
+    loadingMsg.hidden = false;
+  }
 
   const host = hostFilterEl.value.trim();
   const field = sortFieldEl.value as SortField;
@@ -112,37 +118,73 @@ async function loadRecordings(): Promise<void> {
     if (revision !== loadRevision) return;
     logger.error('Failed to list recordings:', err);
     loadingMsg.textContent = 'Failed to load recordings.';
+    loadingMsg.hidden = false;
     return;
   }
 
   if (revision !== loadRevision) return;
   loadingMsg.hidden = true;
 
-  // Tear down players from the previous render before replacing the DOM.
-  destroyPlayers();
-
-  if (!recordings.length) {
-    listEl.replaceChildren();
-    emptyMsg.hidden = false;
-    return;
+  const current = new Map(recordings.map((rec) => [rec.id, JSON.stringify(rec)]));
+  for (const [id, card] of cards) {
+    if (current.get(id) === card.signature && card.element.isConnected) continue;
+    releasePlayer(card.player);
+    card.element.remove();
+    cards.delete(id);
+    const url = objectURLs.get(id);
+    if (url) URL.revokeObjectURL(url);
+    objectURLs.delete(id);
   }
-
-  listEl.replaceChildren();
   for (const rec of recordings) {
-    listEl.appendChild(buildCard(rec, cardActions));
+    let card = cards.get(rec.id);
+    if (!card) {
+      let player!: AudioPlayer;
+      const element = buildCard(rec, {
+        ...cardActions,
+        registerPlayer: (created) => {
+          player = created;
+          players.push(created);
+        },
+      });
+      card = { signature: current.get(rec.id)!, element, player };
+      cards.set(rec.id, card);
+    }
+    listEl.appendChild(card.element);
   }
-  listEl.hidden = false;
+  listEl.hidden = recordings.length === 0;
+  emptyMsg.hidden = recordings.length !== 0;
 }
 
-const reloadDebounced = debounce(loadRecordings, 300);
+async function refreshVisible(): Promise<void> {
+  if (
+    !initialized ||
+    refreshing ||
+    document.hidden ||
+    document.getElementById('view-recordings')!.hidden
+  )
+    return;
+  refreshing = true;
+  try {
+    await loadRecordings(true);
+  } finally {
+    refreshing = false;
+  }
+}
+
+const reloadDebounced = debounce(() => void loadRecordings(), 300);
 hostFilterEl.addEventListener('input', reloadDebounced);
 sortFieldEl.addEventListener('change', () => void loadRecordings());
 sortDirEl.addEventListener('change', () => void loadRecordings());
+window.addEventListener('focus', () => void refreshVisible());
+window.addEventListener('hashchange', () => queueMicrotask(() => void refreshVisible()));
+document.addEventListener('visibilitychange', () => void refreshVisible());
 
 // Release media resources and revoke every cached object URL on unload.
 window.addEventListener('pagehide', () => {
   loadRevision++;
   clearTimeout(debounceHandle);
+  clearInterval(refreshTimer);
+  initialized = false;
   destroyPlayers();
 });
 
@@ -150,4 +192,6 @@ export async function initRecordings(settings: Settings): Promise<void> {
   sortFieldEl.value = settings.defaultSortField;
   sortDirEl.value = settings.defaultSortDirection;
   await loadRecordings();
+  initialized = true;
+  refreshTimer = setInterval(() => void refreshVisible(), 2000);
 }

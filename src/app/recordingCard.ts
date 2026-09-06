@@ -111,7 +111,7 @@ export function buildCard(meta: RecordingMetadata, actions: CardActions): HTMLLI
   ]);
   const status = el('p', { className: 'card__meta', attrs: { role: 'status' } });
   if (meta.status === 'recording') {
-    status.textContent = `Recording in progress. Saved through ${formatDuration(meta.durationMs)}. Reopen Recordings after stopping to export.`;
+    status.textContent = `Recording in progress. Saved through ${formatDuration(meta.durationMs)}. Export becomes available after stopping.`;
     exportBtn.disabled = true;
     deleteBtn.disabled = true;
     btn.disabled = true;
