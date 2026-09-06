@@ -1,6 +1,6 @@
 import { createLogger } from '../shared/Logger';
 import { sendToBackground } from '../shared/messaging';
-import type { TabRecordingState } from '../types';
+import type { AppSection, TabRecordingState } from '../types';
 
 const logger = createLogger('Popup');
 
@@ -12,6 +12,8 @@ const settingsBtn = document.getElementById('settingsBtn')!;
 
 let tabId: number | null = null;
 let state: TabRecordingState = 'idle';
+let actionPending = false;
+let refreshVersion = 0;
 
 async function init(): Promise<void> {
   const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
@@ -25,9 +27,28 @@ async function init(): Promise<void> {
 
 async function refreshState(): Promise<void> {
   if (tabId == null) return;
-  const { state } = await sendToBackground({ type: 'GET_TAB_STATE', payload: { tabId } });
-  applyState(state);
+  const version = ++refreshVersion;
+  const result = await sendToBackground({ type: 'GET_TAB_STATE', payload: { tabId } });
+  if (version !== refreshVersion) return;
+  applyState(result.state);
+  if (result.error) showError(result.error);
 }
+
+function onStateChanged(
+  changes: Record<string, browser.storage.StorageChange>,
+  area: string,
+): void {
+  if (area !== 'session' || !changes['recordingState']) return;
+  void refreshState().catch((err: unknown) => {
+    showError(err instanceof Error ? err.message : String(err));
+  });
+}
+
+browser.storage.onChanged.addListener(onStateChanged);
+window.addEventListener('unload', (): void => {
+  refreshVersion++;
+  browser.storage.onChanged.removeListener(onStateChanged);
+});
 
 function applyState(next: TabRecordingState): void {
   state = next;
@@ -37,23 +58,26 @@ function applyState(next: TabRecordingState): void {
 
   if (next === 'idle') {
     setStatus('Ready');
-    recordBtn.disabled = false;
     recordBtn.title = 'Record now, or arm to capture the next audio that plays';
   } else if (next === 'armed') {
     setStatus('Armed — waiting for audio');
-    recordBtn.disabled = false;
     recordBtn.classList.add('is-armed');
     recordBtn.title = 'Disarm';
   } else if (next === 'recording') {
     setStatus('Recording...');
-    recordBtn.disabled = false;
     recordBtn.classList.add('is-recording');
     recordBtn.title = 'Stop recording';
   } else {
     setStatus('Saving...');
-    recordBtn.disabled = true;
     recordBtn.classList.add('is-processing');
+    recordBtn.title = 'Saving recording';
   }
+  recordBtn.setAttribute('aria-label', recordBtn.title);
+  updateButtonAvailability();
+}
+
+function updateButtonAvailability(): void {
+  recordBtn.disabled = actionPending || state === 'processing';
 }
 
 function setStatus(text: string, isError = false): void {
@@ -69,28 +93,38 @@ function showError(msg: string): void {
 // One button drives the whole lifecycle. The background decides what the toggle
 // means from the current state (stop / disarm / start now / arm), so the popup
 // just sends TOGGLE_RECORDING and re-reads the resulting state.
-recordBtn.addEventListener('click', async () => {
-  if (tabId == null || state === 'processing') return;
+recordBtn.addEventListener('click', async (): Promise<void> => {
+  if (tabId == null || state === 'processing' || actionPending) return;
 
-  const prev = state;
+  actionPending = true;
   recordBtn.disabled = true;
-  const result = await sendToBackground({ type: 'TOGGLE_RECORDING', payload: { tabId } });
-  if (!result.ok) {
-    applyState(prev);
-    showError(result.error ?? 'Action failed');
-    return;
+  try {
+    const result = await sendToBackground({ type: 'TOGGLE_RECORDING', payload: { tabId } });
+    await refreshState();
+    if (!result.ok) showError(result.error);
+  } catch (err: unknown) {
+    showError(err instanceof Error ? err.message : String(err));
+  } finally {
+    actionPending = false;
+    updateButtonAvailability();
   }
-  await refreshState();
 });
 
-managerBtn.addEventListener('click', () => {
-  void sendToBackground({ type: 'OPEN_APP', payload: { section: 'recordings' } });
-  window.close();
+async function openApp(section: AppSection): Promise<void> {
+  try {
+    await sendToBackground({ type: 'OPEN_APP', payload: { section } });
+    window.close();
+  } catch (err: unknown) {
+    showError(err instanceof Error ? err.message : String(err));
+  }
+}
+
+managerBtn.addEventListener('click', (): void => {
+  void openApp('recordings');
 });
 
-settingsBtn.addEventListener('click', () => {
-  void sendToBackground({ type: 'OPEN_APP', payload: { section: 'settings' } });
-  window.close();
+settingsBtn.addEventListener('click', (): void => {
+  void openApp('settings');
 });
 
 init().catch((err: unknown) => {

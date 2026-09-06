@@ -12,7 +12,7 @@ type OutboundMessage = PopupToBgMessage | AppToBgMessage;
 // Maps each outbound request onto the response the background returns for it, so
 // sendToBackground resolves with the right type and call sites need no `as` cast.
 interface ResponseFor {
-  GET_TAB_STATE: { state: TabRecordingState };
+  GET_TAB_STATE: { state: TabRecordingState; error?: string };
   TOGGLE_RECORDING: ActionResult;
   OPEN_APP: undefined;
   LIST_RECORDINGS: RecordingMetadata[];
