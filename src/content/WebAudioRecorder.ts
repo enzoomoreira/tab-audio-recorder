@@ -43,6 +43,12 @@ export class WebAudioRecorder implements IRecorder {
     logger.info('Web Audio capture started, bitrate:', bitrate);
   }
 
+  abort(): void {
+    this.recording = false;
+    this.removeErrorListener();
+    postToPage({ type: 'ABORT' });
+  }
+
   async stop(): Promise<CaptureResult> {
     if (!this.recording) throw new Error('Not recording');
     postToPage({ type: 'STOP' });
@@ -56,9 +62,16 @@ export class WebAudioRecorder implements IRecorder {
           endedAt: number;
         }
       | { ok: false; error: string };
-    const reply = await waitForReply<StopReply>('STOPPED');
-    this.recording = false;
-    this.removeErrorListener();
+    let reply: StopReply;
+    try {
+      reply = await waitForReply<StopReply>('STOPPED');
+    } catch (error) {
+      this.abort();
+      throw error;
+    } finally {
+      this.recording = false;
+      this.removeErrorListener();
+    }
     if (!reply.ok) throw new Error(reply.error);
     logger.info('Web Audio capture stopped, blob:', reply.blob.size, 'bytes');
     return {

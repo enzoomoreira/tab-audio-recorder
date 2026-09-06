@@ -8,7 +8,7 @@
 export const TAG = 'tab-audio-recorder';
 export const TAG_PAGE = 'tab-audio-recorder-page';
 
-/** Send a message to the MAIN-world hook (tagged so the page cannot spoof it). */
+/** Send a tagged message to the MAIN-world hook. Tags route messages; they do not authenticate them. */
 export function postToPage(payload: Record<string, unknown>): void {
   window.postMessage({ source: TAG, ...payload }, window.location.origin);
 }

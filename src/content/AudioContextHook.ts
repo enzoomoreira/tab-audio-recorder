@@ -110,8 +110,12 @@
   let chunks: Blob[] = [];
   let startedAt = 0;
   let mimeType = '';
+  let stoppedAt = 0;
 
   function pickContext(): AudioContext | null {
+    for (const ctx of allContexts) {
+      if (ctx.state === 'closed') allContexts.delete(ctx);
+    }
     for (const ctx of allContexts) {
       if (ctx.state === 'running') return ctx;
     }
@@ -142,7 +146,20 @@
     if (!data || data.source !== TAG) return;
 
     if (data.type === 'PROBE') {
-      reply({ type: 'PROBE_RESULT', hasContexts: allContexts.size > 0 });
+      reply({ type: 'PROBE_RESULT', hasContexts: pickContext() !== null });
+      return;
+    }
+
+    if (data.type === 'ABORT') {
+      const rec = activeRecorder;
+      activeRecorder = null;
+      chunks = [];
+      if (rec) {
+        rec.ondataavailable = null;
+        rec.onerror = null;
+        rec.onstop = null;
+        if (rec.state !== 'inactive') rec.stop();
+      }
       return;
     }
 
@@ -164,6 +181,10 @@
         activeRecorder = new MediaRecorder(tap.stream, opts);
         mimeType = activeRecorder.mimeType;
         chunks = [];
+        stoppedAt = 0;
+        activeRecorder.onstop = () => {
+          stoppedAt = Date.now();
+        };
         activeRecorder.ondataavailable = (ev) => {
           if (ev.data.size > 0) chunks.push(ev.data);
         };
@@ -171,6 +192,10 @@
         // onerror, so this only fires while actively recording.
         activeRecorder.onerror = (ev) => {
           const err = (ev as Event & { error?: { message?: string } }).error;
+          if (activeRecorder) {
+            activeRecorder.ondataavailable = null;
+            activeRecorder.onstop = null;
+          }
           activeRecorder = null;
           chunks = [];
           reply({ type: 'ERROR', error: `MediaRecorder error: ${err?.message ?? 'unknown'}` });
@@ -192,8 +217,8 @@
         return;
       }
       const rec = activeRecorder;
-      rec.onstop = () => {
-        const endedAt = Date.now();
+      const finalize = (): void => {
+        const endedAt = stoppedAt || Date.now();
         const blob = new Blob(chunks, { type: mimeType });
         activeRecorder = null;
         chunks = [];
@@ -207,9 +232,12 @@
           endedAt,
         });
       };
+      rec.onstop = finalize;
       rec.onerror = (ev) => {
         activeRecorder = null;
         chunks = [];
+        rec.onstop = null;
+        rec.ondataavailable = null;
         const err = (ev as Event & { error?: { message?: string } }).error;
         reply({
           type: 'STOPPED',
@@ -217,7 +245,8 @@
           error: `MediaRecorder error: ${err?.message ?? 'unknown'}`,
         });
       };
-      rec.stop();
+      if (stoppedAt) finalize();
+      else if (rec.state !== 'inactive') rec.stop();
       return;
     }
   });

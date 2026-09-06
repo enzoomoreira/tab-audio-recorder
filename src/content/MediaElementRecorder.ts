@@ -80,8 +80,9 @@ export class MediaElementRecorder implements IRecorder {
 
   /** Cancel a pending arm (no element has played yet). */
   disarm(): void {
+    const pending = this.disposeArmListener !== null;
     this.removeArmListener();
-    postToPage({ type: 'EL_DISARM' });
+    postToPage({ type: pending ? 'EL_ABORT' : 'EL_DISARM' });
     logger.info('Media element capture disarmed');
   }
 
@@ -116,9 +117,16 @@ export class MediaElementRecorder implements IRecorder {
           endedAt: number;
         }
       | { ok: false; error: string };
-    const reply = await waitForReply<StopReply>('EL_STOPPED');
-    this.recording = false;
-    this.removeErrorListener();
+    let reply: StopReply;
+    try {
+      reply = await waitForReply<StopReply>('EL_STOPPED');
+    } catch (error) {
+      this.abort();
+      throw error;
+    } finally {
+      this.recording = false;
+      this.removeErrorListener();
+    }
     if (!reply.ok) throw new Error(reply.error);
     logger.info('Media element capture stopped, blob:', reply.blob.size, 'bytes');
     return {
