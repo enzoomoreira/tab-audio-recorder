@@ -84,6 +84,7 @@ manual review, so justify the surface explicitly:
 >   and clear state on navigation.
 > - `tabs`: read the active tab's title/URL for recording metadata.
 > - `downloads`: export saved recordings to the user's Downloads folder.
+> - `alarms`: wake the background for recording limits and stop timeouts.
 >
 > DRM/EME-protected playback is detected and refused up front (no silent capture).
 

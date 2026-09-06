@@ -135,6 +135,7 @@ Each permission is requested only for the functionality below:
 | `webRequest` (observe response headers)             | Detect audio stream URLs by `Content-Type` for the network-fetch strategy.                                                                                                 |
 | `storage`                                           | Persist settings and in-flight recording state (`storage.session`).                                                                                                        |
 | `downloads`                                         | Export saved recordings to disk.                                                                                                                                           |
+| `alarms`                                            | Wake the non-persistent background for recording limits and stop timeouts.                                                                                                 |
 | Web Audio hook in the MAIN world                    | Required to tap `AudioContext` audio on sites that never create a media element. It must run at `document_start` to intercept connections before the page wires its graph. |
 
 ## Privacy

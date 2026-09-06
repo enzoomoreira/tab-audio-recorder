@@ -1,5 +1,27 @@
 # Changelog
 
+## [2026-09-06 08:40]
+
+### Fixed
+
+- Popup follows recording state changes while open, leaves "Saving..." after
+  completion, reports capture/storage errors, and recovers from rejected actions.
+- Background waits for session hydration, claims armed captures before yielding,
+  rejects overlapping toggles, and clears routing when the recording frame navigates.
+- Completion of an older save after navigation cannot reset a newer recording
+  or overwrite its error state.
+- Recording deadlines survive background suspension through session storage and
+  browser alarms; the stop watchdog starts before waiting for acknowledgement.
+- Captures remain saveable after media ends naturally. Pending capture can be
+  cancelled, native controls/autoplay are detected, and stop failures release listeners.
+- IndexedDB writes are acknowledged only after transaction commit; storage aborts
+  are reported instead of silently returning success.
+- Playback, export and delete recover after errors; stale list/blob responses no
+  longer overwrite newer UI state. Downloads release object URLs even when they
+  complete before the download request resolves.
+- Settings saves and reset execute in order, with visible storage failures.
+- Firefox test launcher uses the installed geckodriver package's supported API.
+
 All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),

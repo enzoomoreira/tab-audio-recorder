@@ -46,6 +46,11 @@ implements the `IRepository` interface from `src/types/index.ts`.
 
 `save` and `deleteById` write both stores inside a single read-write transaction,
 so metadata and blob never drift apart.
+Both methods wait for the transaction's `complete` event; an abort rejects the
+operation even if individual requests already succeeded. `saveCapture` returns
+an `ActionResult`, allowing the background to expose storage failures in the popup.
+Auto-export or retention errors after persistence are logged separately: they do
+not mean the original recording failed to save.
 
 ### API
 
@@ -119,6 +124,9 @@ directory.
 - The object URL is **revoked** once the download reaches a terminal state
   (`complete` or `interrupted`), via a `downloads.onChanged` listener that removes
   itself. This prevents leaking object URLs in the long-lived background.
+- The listener is installed before requesting the download so an early completion
+  cannot be missed. The manager reports "Download started" after acceptance;
+  final completion or interruption is available in Firefox's Downloads UI.
 
 ## Retention: pruning
 
@@ -134,3 +142,8 @@ lazily fetches the blob via `GET_BLOB` on first play, wraps it in an object URL,
 and caches that URL across Play and Export for the card. The view revokes all
 cached URLs on `pagehide` and when a recording is deleted. See the player's
 lazy-load notes inline in `AudioPlayer.ts`.
+Pending blob loads are invalidated when a player is destroyed, and failed loads
+can be retried. The list discards outdated responses after a newer filter request.
+
+Settings changes are queued in order. Reset cancels pending debounce work and
+runs after any in-flight save; storage failures remain visible in the settings view.

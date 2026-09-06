@@ -79,12 +79,14 @@ any page script runs. It is self-contained (no imports, no `browser.*`):
   unbounded (holding references also pins detached elements against GC). This
   catches attached elements, detached `new Audio()` elements, and elements inside
   closed shadow roots alike.
+  A capturing `play` event listener also observes document media started through
+  native controls or autoplay, which do not call the JavaScript wrapper.
 - **Picks the capture target** on `START`: a currently-playing element (video
   preferred — it carries the audio we want), else the most recently played one.
 - **Arm + auto-start.** On `EL_ARM` the hook sets an armed flag; the very next
   `play()` starts capture on _that_ element synchronously, inside the patched
-  `play()`, with **no background round-trip** — so the recording catches the audio
-  from sample zero. It reports the outcome with a spontaneous `EL_ARM_FIRED`, which
+  `play()`, with **no background round-trip**, reducing capture startup delay.
+  It reports the outcome with a spontaneous `EL_ARM_FIRED`, which
   the ISOLATED driver forwards to the background as `ARMED_STARTED`. `EL_DISARM`
   cancels a pending arm; `EL_ABORT` discards a capture a losing frame started in a
   multi-frame race.
@@ -104,6 +106,11 @@ any page script runs. It is self-contained (no imports, no `browser.*`):
   `recorder.start(1000)` emits a chunk every second, assembled into one `Blob` on
   stop. A spontaneous mid-capture `onerror` reports `EL_ERROR`, which the ISOLATED
   driver forwards as `RECORDING_ERROR`.
+- **Natural end and cancellation.** If media ends before the user presses Stop,
+  the hook retains the final chunks and stop timestamp for saving. It does not
+  call `MediaRecorder.stop()` again on an inactive recorder. Stop, abort and error
+  release the captured tracks; cancellation also invalidates a start waiting for
+  its first audio track.
 
 ### MediaElementRecorder (`src/content/MediaElementRecorder.ts`) — ISOLATED world
 
@@ -130,10 +137,14 @@ happen in the hook; this class just speaks a small `window.postMessage` protocol
 - `start()` / `stop()` wait for the matching reply (10s timeout); the assembled
   `Blob` is structured-cloneable, so it crosses the postMessage boundary and then
   the runtime messaging boundary back to the background.
+  A stop timeout aborts the hook and removes passive listeners before returning
+  an error, so the next capture can start cleanly.
 
 > The Web Audio hook (Strategy 3) shares this `tab-audio-recorder` /
 > `tab-audio-recorder-page` channel; the two stay apart through distinct message
 > types (`EL_*` here vs `PROBE`/`START`/`STOP` there).
+> These tags route messages; they do not authenticate the MAIN world against the
+> page's own scripts.
 
 ## Strategy 2: Network stream (fetch)
 

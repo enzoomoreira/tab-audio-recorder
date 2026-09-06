@@ -9,7 +9,8 @@ fastest way to find every file you need to touch.
 
 - [Bun](https://bun.sh) (package manager + script runner)
 - Firefox
-- For E2E only: `geckodriver` (pulled in as a dev dependency)
+- For E2E only: the `geckodriver` npm wrapper (dev dependency). Its `download()`
+  API resolves the cached executable, downloading it on first use.
 
 ## Build and run
 

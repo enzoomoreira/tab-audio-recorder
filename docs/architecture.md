@@ -55,7 +55,7 @@ parts:
   (`OPEN_APP`), which reuses an already-open app tab and just re-targets the hash.
 
 The permission rationale (why each of `tabs`, `webRequest`, `webNavigation`,
-`storage`, `downloads`, `<all_urls>` is needed) lives in the root
+`storage`, `downloads`, `alarms`, `<all_urls>` is needed) lives in the root
 [README](../README.md#permissions).
 
 ## Module map
