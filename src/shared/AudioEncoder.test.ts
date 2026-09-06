@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
-import { encodeWav, encodeMp3, type PcmAudio } from './AudioEncoder';
+import { encodeWav, encodeMp3, type PcmAudio } from './PcmEncoder';
 
 function tone(frames: number, channels: number, sampleRate: number): PcmAudio {
   const data: Float32Array[] = [];

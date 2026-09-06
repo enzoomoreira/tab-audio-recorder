@@ -1,5 +1,9 @@
 import type { ExportFormat } from '../types';
 
+export const MP3_SAMPLE_RATES = new Set([
+  8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000,
+]);
+
 // Lightweight format metadata, free of the encoder's heavy deps (lamejs), so
 // the settings page and filename logic can import it without pulling in the
 // MP3 encoder. The encoder itself lives in AudioEncoder.ts.

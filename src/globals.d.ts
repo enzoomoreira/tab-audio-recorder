@@ -5,3 +5,7 @@
  * builds get `false`; the dead-code branches are then stripped by the minifier.
  */
 declare const __TEST_BRIDGE__: boolean;
+declare module '*?worker&url' {
+  const url: string;
+  export default url;
+}

@@ -6,6 +6,19 @@ import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
 import type { Settings } from '../shared/Settings';
 import type { CaptureResult } from '../types';
 
+// Unit fixtures use PCM encoding directly; Firefox QA exercises the packaged worker.
+vi.mock('../shared/EncodingWorker', async () => {
+  const { encodeMp3, encodeWav } = await import('../shared/PcmEncoder');
+  return {
+    encodeInWorker: async (
+      pcm: import('../shared/PcmEncoder').PcmAudio,
+      format: 'wav' | 'mp3',
+      kbps: number,
+    ): Promise<Uint8Array<ArrayBuffer>> =>
+      format === 'wav' ? encodeWav(pcm) : encodeMp3(pcm, kbps),
+  };
+});
+
 type DownloadFn = (opts: {
   url: string;
   filename: string;
