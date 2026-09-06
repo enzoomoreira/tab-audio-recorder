@@ -135,7 +135,7 @@ async function loadRecordings(background = false): Promise<void> {
     if (url) URL.revokeObjectURL(url);
     objectURLs.delete(id);
   }
-  for (const rec of recordings) {
+  for (const [index, rec] of recordings.entries()) {
     let card = cards.get(rec.id);
     if (!card) {
       let player!: AudioPlayer;
@@ -149,7 +149,8 @@ async function loadRecordings(background = false): Promise<void> {
       card = { signature: current.get(rec.id)!, element, player };
       cards.set(rec.id, card);
     }
-    listEl.appendChild(card.element);
+    const position = listEl.children.item(index);
+    if (position !== card.element) listEl.insertBefore(card.element, position);
   }
   listEl.hidden = recordings.length === 0;
   emptyMsg.hidden = recordings.length !== 0;
