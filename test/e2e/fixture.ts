@@ -1,6 +1,6 @@
 import { Builder, type WebDriver } from 'selenium-webdriver';
 import { Options as FirefoxOptions, ServiceBuilder } from 'selenium-webdriver/firefox';
-import { path as geckoDriverPath } from 'geckodriver';
+import { download } from 'geckodriver';
 import { resolve, dirname } from 'path';
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -47,7 +47,7 @@ export async function launchDriver(baseUrl: string, altUrl: string): Promise<E2E
   // Chrome-context execute (UUID discovery) needs system access. geckodriver
   // 0.37.1 dropped support for Firefox's --remote-allow-system-access via
   // moz:firefoxOptions; the grant now belongs to the geckodriver process.
-  const service = new ServiceBuilder(geckoDriverPath).addArguments('--allow-system-access');
+  const service = new ServiceBuilder(await download()).addArguments('--allow-system-access');
 
   const driver = await new Builder()
     .forBrowser('firefox')
